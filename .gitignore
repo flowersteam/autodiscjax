@@ -1,0 +1,6 @@
+.idea/
+*__pycache__/
+*.pyc
+*.pickle
+*.eqx
+*.ipynb_checkpoints/
