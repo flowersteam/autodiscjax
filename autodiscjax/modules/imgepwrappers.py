@@ -116,7 +116,7 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
     selected_popsize: float = 0.2
     flow_noise: float = 0.1
 
-    def __init__(self, out_treedef, out_shape, out_dtype, IM_fn, IM_grad_scaling=0.4, random_popsize=0.2, selected_popsize=0.2, flow_noise=0.1):
+    def __init__(self, out_treedef, out_shape, out_dtype, IM_fn=LearningProgressIM(), IM_grad_scaling=0.4, random_popsize=0.2, selected_popsize=0.2, flow_noise=0.1):
         super().__init__(out_treedef, out_shape, out_dtype)
         self.IM_fn = IM_fn
         self.IM_grad_scaling = IM_grad_scaling
@@ -149,6 +149,7 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
         grad_updates = self.IM_grad_scaling * IM_grads[flowed_pop_ids]
         grad_updates_flat, _ = jtu.tree_flatten(grad_updates)
         grad_updates = self.out_treedef.unflatten(grad_updates_flat)
+        grad_updates = jtu.tree_map(lambda gu, min, max: gu*(max-min), grad_updates, library_min, library_max)
         key, subkey = jrandom.split(key)
         noise_std = jtu.tree_map(lambda min, max: self.flow_noise*(max-min), library_min, library_max)
         zero_mean = jtu.tree_map(lambda sig: jnp.zeros_like(sig), noise_std)
