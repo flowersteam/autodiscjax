@@ -99,7 +99,7 @@ class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
         reached_goals_flat = jnp.concatenate(reached_goals_flat, axis=-1)
 
         selected_intervention_ids, distances = nearest_neighbors(target_goals_flat, reached_goals_flat, k=self.k)
-        selected_intervention_ids = selected_intervention_ids.squeeze()
+        selected_intervention_ids = jrandom.choice(key, selected_intervention_ids, axis=1)
 
         return selected_intervention_ids
 
