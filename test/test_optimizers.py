@@ -1,5 +1,4 @@
-from autodiscjax.modules.sgdoptimizer import SGDOptimizer, OpenESOptimizer
-from autodiscjax.modules.eaoptimizer import EAOptimizer
+from autodiscjax.modules.optimizers import EAOptimizer, SGDOptimizer, OpenESOptimizer
 import equinox as eqx
 import importlib
 from jax import lax, nn, vmap
