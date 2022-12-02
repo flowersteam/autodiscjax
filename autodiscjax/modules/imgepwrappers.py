@@ -1,5 +1,5 @@
 import autodiscjax as adx
-from autodiscjax.modules.sgdoptimizer import SGDOptimizer
+from autodiscjax.modules.optimizers import BaseOptimizer
 from autodiscjax.utils.misc import filter, nearest_neighbors, normal, uniform
 import equinox as eqx
 from functools import partial
@@ -198,18 +198,10 @@ class L2GoalAchievementLoss(BaseGoalAchievementLoss):
         return jnp.square(reached_goals_embeddings - target_goals_embeddings).sum()
 
 class BaseGCInterventionOptimizer(adx.Module):
+    optimizer: BaseOptimizer
+
     @jit
     def __call__(self, key, intervention_fn, interventions_params, system_rollout, goal_embedding_encoder, goal_achievement_loss, target_goals_embeddings):
-        raise NotImplementedError
-
-class SGDInterventionOptimizer(BaseGCInterventionOptimizer, SGDOptimizer):
-
-    def __init__(self, out_treedef, out_shape, out_dtype, n_optim_steps, lr):
-        BaseGCInterventionOptimizer.__init__(self, out_treedef, out_shape, out_dtype)
-        SGDOptimizer.__init__(self, n_optim_steps, lr)
-
-    def __call__(self, key, intervention_fn, interventions_params, system_rollout, goal_embedding_encoder, goal_achievement_loss, target_goals_embeddings):
-
         @jit
         def loss_fn(key, params):
             key, subkey = jrandom.split(key)
@@ -221,8 +213,7 @@ class SGDInterventionOptimizer(BaseGCInterventionOptimizer, SGDOptimizer):
 
             return goal_achievement_loss(reached_goals_embeddings, target_goals_embeddings)
 
-        return SGDOptimizer.__call__(self, key, interventions_params, loss_fn)
-
+        return self.optimizer(key, interventions_params, loss_fn)
 
 class BaseSystemRollout(adx.Module):
     @jit
