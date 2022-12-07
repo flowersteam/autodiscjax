@@ -1,15 +1,26 @@
 from autodiscjax import DictTree
 from autodiscjax.utils.misc import normal
 import equinox as eqx
+import exputils.data.logging as log
 from jax import jit, value_and_grad, vmap
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
+from jaxtyping import PyTree
 import optax
+import time
 
 class BaseOptimizer(eqx.Module):
+    low: PyTree
+    high: PyTree
+
     def __call__(self, key, params, loss_fn):
         raise NotImplementedError
+
+    @eqx.filter_jit
+    def clamp(self, out_pytree, is_leaf=None):
+        return jtu.tree_map(lambda val, low, high: jnp.minimum(jnp.maximum(val, low), high), out_pytree, self.low,
+                            self.high, is_leaf=is_leaf)
 
 
 class EAOptimizer(BaseOptimizer):
@@ -25,6 +36,7 @@ class EAOptimizer(BaseOptimizer):
         loss_fn = vmap(jit(loss_fn))
 
         for optim_step_idx in range(self.n_optim_steps):
+            step_start = time.time()
             # random mutations
             zero_mean = jtu.tree_map(lambda p: jnp.zeros_like(p), params)
             out_treedef = jtu.tree_structure(params)
@@ -40,10 +52,18 @@ class EAOptimizer(BaseOptimizer):
             key, subkeys = subkeys[0], subkeys[1:]
             losses = loss_fn(subkeys, worker_params)
             losses_flat, _ = jtu.tree_flatten(losses) #shape (n_workers, )
-            losses_flat = jnp.concatenate(losses_flat)
 
             # Select best worker
-            params = worker_params[losses_flat.argmin()]
+            best_worker_idx = jnp.concatenate(losses_flat).argmin()
+            params = jtu.tree_map(lambda p: p[best_worker_idx], worker_params)
+
+            # Clamp params
+            params = self.clamp(params)
+
+            step_end = time.time()
+
+            log.add_value('optim_step_loss', losses_flat)
+            log.add_value('optim_step_time', step_end-step_start)
 
         return params
 
@@ -52,7 +72,8 @@ class SGDOptimizer(BaseOptimizer):
     n_optim_steps: int = eqx.static_field()
     optimizer: optax._src.base.GradientTransformation
 
-    def __init__(self, n_optim_steps, lr):
+    def __init__(self, low, high, n_optim_steps, lr):
+        super().__init__(low, high)
         self.n_optim_steps = n_optim_steps
         lr_flat, lr_treedef = jtu.tree_flatten(lr)
         leaves_ids = list(range(lr_treedef.num_leaves))
@@ -73,7 +94,6 @@ class SGDOptimizer(BaseOptimizer):
     def __call__(self, key, params, loss_fn):
         # TODO:
         #  remove the DictTree to dict conversion if addict issue mewwts/addict#150 gets solved
-        #  log train loss and optim step time
         #  scan loop
 
         if isinstance(params, DictTree):
@@ -86,9 +106,13 @@ class SGDOptimizer(BaseOptimizer):
 
 
         for optim_step_idx in range(self.n_optim_steps):
+            step_start = time.time()
+
             key, subkey = jrandom.split(key)
             if is_params_dictree:
                 params = DictTree(params)
+                # Clamp params
+                params = self.clamp(params)
             loss, grads = self.value_and_grad(subkey, params, jit(loss_fn))
 
             if is_params_dictree:
@@ -97,8 +121,13 @@ class SGDOptimizer(BaseOptimizer):
             updates, opt_state = self.optimizer.update(grads, opt_state)
             params = optax.apply_updates(params, updates)
 
+            step_end = time.time()
+            log.add_value('optim_step_loss', loss)
+            log.add_value('optim_step_time', step_end - step_start)
+
         if is_params_dictree:
             params = DictTree(params)
+            params = self.clamp(params)
 
         return params
 

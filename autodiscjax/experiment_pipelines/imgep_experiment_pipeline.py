@@ -15,7 +15,7 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
                          gc_intervention_optimizer: eqx.Module,
                          goal_embedding_encoder: eqx.Module,
                          goal_achievement_loss: eqx.Module,
-                         out_sanity_check=True):
+                         out_sanity_check=True, save_modules=False):
     
     # Set platform device
     jax.config.update("jax_platform_name", jax_platform_name)
@@ -56,6 +56,7 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
     for iteration_idx in range(n_random_batches + n_imgep_batches):
 
         if iteration_idx < n_random_batches:
+            print("Generate random intervention")
             # generate random intervention
             key, subkey = jrandom.split(key)
             interventions_params = random_intervention_generator(subkey)
@@ -70,12 +71,14 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
 
         else:
             # sample goal
+            print("Generate target goals")
             key, subkey = jrandom.split(key)
-            target_goals_embeddings = goal_generator(subkey, history.reached_goal_embedding_library, history.system_rollout_statistics_library)
+            target_goals_embeddings = goal_generator(subkey, history.target_goal_embedding_library, history.reached_goal_embedding_library, history.system_rollout_statistics_library)
             if out_sanity_check:
                 goal_generator.out_sanity_check(target_goals_embeddings)
 
             # goal-conditioned selection of source intervention from history
+            print("Select closes intervention")
             key, subkey = jrandom.split(key)
             source_interventions_ids = gc_intervention_selector(subkey, target_goals_embeddings, history.reached_goal_embedding_library, history.system_rollout_statistics_library)
             if out_sanity_check:
@@ -83,30 +86,35 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
             interventions_params = jtu.tree_map(lambda x: x[source_interventions_ids], history.intervention_params_library)
 
             # goal-conditioned optimization of source intervention
+            print("Optimize the selected intervention")
             key, subkey = jrandom.split(key)
             interventions_params = gc_intervention_optimizer(subkey, intervention_fn, interventions_params, system_rollout, goal_embedding_encoder, goal_achievement_loss, target_goals_embeddings)
             if out_sanity_check:
                 gc_intervention_optimizer.out_sanity_check(interventions_params)
 
         # generate perturbation
+        print("Generate the perturbation")
         key, subkey = jrandom.split(key)
         perturbations_params = perturbation_generator(subkey)
         if out_sanity_check:
             perturbation_generator.out_sanity_check(perturbations_params)
 
         # rollout system
+        print("Rollout the system")
         key, subkey = jrandom.split(key)
         system_outputs = system_rollout(subkey, intervention_fn, interventions_params, perturbation_fn, perturbations_params)
         if out_sanity_check:
             system_rollout.out_sanity_check(system_outputs)
 
         # represent outputs -> goals
+        print("Encode the goal")
         key, subkey = jrandom.split(key)
         reached_goals_embeddings = goal_embedding_encoder(subkey, system_outputs)
         if out_sanity_check:
             goal_embedding_encoder.out_sanity_check(reached_goals_embeddings)
 
         # represent outputs -> other statistics
+        print("Encode the rollout statistics")
         key, subkey = jrandom.split(key)
         system_rollouts_statistics = rollout_statistics_encoder(subkey, system_outputs)
         if out_sanity_check:
@@ -125,14 +133,15 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
 
     # Save history and modules
     history.save(os.path.join(save_folder, "experiment_history.pickle"), overwrite=True)
-    eqx.tree_serialise_leaves(os.path.join(save_folder, "random_intervention_generator.eqx"), random_intervention_generator)
-    eqx.tree_serialise_leaves(os.path.join(save_folder, "intervention_fn.eqx"), intervention_fn)
-    eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_generator.eqx"), perturbation_generator)
-    eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_fn.eqx"), perturbation_fn)
-    eqx.tree_serialise_leaves(os.path.join(save_folder, "system_rollout.eqx"), system_rollout)
-    eqx.tree_serialise_leaves(os.path.join(save_folder, "rollout_statistics_encoder.eqx"), rollout_statistics_encoder)
-    eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_generator.eqx"), goal_generator)
-    eqx.tree_serialise_leaves(os.path.join(save_folder, "gc_intervention_selector.eqx"), gc_intervention_selector)
-    eqx.tree_serialise_leaves(os.path.join(save_folder, "gc_intervention_optimizer.eqx"), gc_intervention_optimizer)
-    eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_embedding_encoder.eqx"), goal_embedding_encoder)
-    eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_achievement_loss.eqx"), goal_achievement_loss)
+    if save_modules:
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "random_intervention_generator.eqx"), random_intervention_generator)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "intervention_fn.eqx"), intervention_fn)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_generator.eqx"), perturbation_generator)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_fn.eqx"), perturbation_fn)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "system_rollout.eqx"), system_rollout)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "rollout_statistics_encoder.eqx"), rollout_statistics_encoder)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_generator.eqx"), goal_generator)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "gc_intervention_selector.eqx"), gc_intervention_selector)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "gc_intervention_optimizer.eqx"), gc_intervention_optimizer)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_embedding_encoder.eqx"), goal_embedding_encoder)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_achievement_loss.eqx"), goal_achievement_loss)

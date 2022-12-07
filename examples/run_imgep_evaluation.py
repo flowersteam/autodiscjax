@@ -1,85 +1,43 @@
 from autodiscjax import DictTree
 from autodiscjax.experiment_pipelines import run_imgep_evaluation
-import autodiscjax.modules.imgepwrappers as imgep
-import autodiscjax.modules.grnwrappers as grn
-import importlib
-import jax.numpy as jnp
-import jax.tree_util as jtu
-import sbmltoodejax
+import evaluation_config
+import experiment_config
+import exputils.data.logging as log
+from create_modules import *
 
-jax_platform_name = "cpu"
-seed = 0
-n_perturbations = 50
-biomodel_id = 29
-biomodel_odejax_filepath = f"biomodel_{biomodel_id}.py"
-n_system_steps = 1000
-deltaT = 0.1
-atol = 1e-6
-rtol = 1e-12
-mxstep = 50000
-experiment_save_folder = "experiment_data/"
-evaluation_save_folder = "evaluation_data/"
+if __name__ == "__main__":
+    # Load history of interventions from the experiment
+    experiment_history = DictTree.load(experiment_config.get_pipeline_config().experiment_data_save_folder + "experiment_history.pickle")
+    experiment_intervention_params_library = experiment_history.intervention_params_library
+    experiment_system_output_library = experiment_history.system_output_library
 
-# Load history from the experiment
-experiment_history = DictTree.load(experiment_save_folder+"experiment_history.pickle")
-batch_size = len(experiment_history.reached_goal_embedding_library)
+    # Set batch size to the length of experiment data
+    experiment_config.batch_size = len(jtu.tree_leaves(experiment_intervention_params_library)[0])
+    evaluation_config.batch_size = experiment_config.batch_size
 
-# Prepare PyTree structures/shape/dtype
-intervention_fn = grn.PiecewiseSetConstantIntervention(time_to_interval_fn=grn.TimeToInterval(intervals=[[0,1], [5,6]]))
-intervention_params_library = experiment_history.intervention_params_library
+    # Create System Modules
+    system_rollout_config = experiment_config.get_system_rollout_config()
+    system_rollout = create_system_rollout_module(system_rollout_config)
+    rollout_statistics_encoder = create_rollout_statistics_encoder_module(system_rollout)
 
-perturbation_fn = grn.PiecewiseAddConstantIntervention(time_to_interval_fn=grn.TimeToInterval(intervals=[[0,10]]))
-perturbation_params_tree = DictTree()
-perturbation_params_tree.c[0] = "placeholder"
-perturbation_params_tree.c[1] = "placeholder"
-perturbation_params_treedef = jtu.tree_structure(perturbation_params_tree)
-perturbation_params_shape = jtu.tree_map(lambda _: (1, ), perturbation_params_tree)
-batched_perturbation_params_shape = jtu.tree_map(lambda shape: (batch_size, )+shape, perturbation_params_shape, is_leaf=lambda node: isinstance(node, tuple))
-perturbation_params_dtype = jtu.tree_map(lambda _: jnp.float32, perturbation_params_tree)
+    # Create Intervention Modules
+    intervention_config = experiment_config.get_intervention_config()
+    _, intervention_fn = create_intervention_module(intervention_config)
 
-goal_embedding_tree = "placeholder"
-goal_embedding_treedef = jtu.tree_structure(goal_embedding_tree)
-goal_embedding_shape = jtu.tree_map(lambda _: (2, ), goal_embedding_tree)
-batched_goal_embedding_shape = jtu.tree_map(lambda shape: (batch_size, )+shape, goal_embedding_shape, is_leaf=lambda node: isinstance(node, tuple))
-goal_embedding_dtype = jtu.tree_map(lambda _: jnp.float32, goal_embedding_tree)
+    # Create Perturbation Modules
+    perturbation_config = evaluation_config.get_perturbation_config()
+    perturbation_generator, perturbation_fn = create_perturbation_module(perturbation_config)
 
-# Create Modules
-perturbation_mean = jtu.tree_map(lambda shape, dtype: jnp.zeros(shape=shape, dtype=dtype), perturbation_params_shape, perturbation_params_dtype, is_leaf=lambda node: isinstance(node, tuple))
-perturbation_std = jtu.tree_map(lambda shape, dtype: jnp.ones(shape=shape, dtype=dtype), perturbation_params_shape, perturbation_params_dtype, is_leaf=lambda node: isinstance(node, tuple))
-perturbation_generator = imgep.NormalRandomGenerator(perturbation_params_treedef, batched_perturbation_params_shape, perturbation_params_dtype,
-                                                                  perturbation_mean, perturbation_std)
-
-
-
-biomodel_xml_body = sbmltoodejax.biomodels_api.get_content_for_model(biomodel_id)
-model_data = sbmltoodejax.parse.ParseSBMLFile(biomodel_xml_body)
-sbmltoodejax.modulegeneration.GenerateModel(model_data, biomodel_odejax_filepath)
-spec = importlib.util.spec_from_file_location("JaxBioModelSpec", biomodel_odejax_filepath)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-grnstep_cls = getattr(module, "ModelStep")
-grnstep = grnstep_cls(atol=atol, rtol=rtol, mxstep=mxstep)
-y0 = getattr(module, "y0")
-w0 = getattr(module, "w0")
-c = getattr(module, "c")
-t0 = getattr(module, "t0")
-y0 = jnp.tile(y0, (batch_size, 1))
-w0 = jnp.tile(w0, (batch_size, 1))
-c = jnp.tile(c, (batch_size, 1))
-system_rollout = grn.GRNRollout(n_steps=n_system_steps, y0=y0, w0=w0, c=c, t0=t0, deltaT=deltaT,
-                                grn_step=grnstep)
-
-rollout_statistics_encoder = grn.GRNRolloutStatisticsEncoder(y_shape=system_rollout.out_shape.y, time_window=jnp.r_[-100:0],
-                                                             is_stable_std_epsilon=1e-2, is_converging_filter_size=50,
-                                                             is_periodic_max_frequency_threshold=40, deltaT=deltaT)
-
-goal_filter_fn = jtu.Partial(lambda system_outputs: system_outputs.y[:, (2, 3), -1])
-goal_embedding_encoder = imgep.FilterGoalEmbeddingEncoder(goal_embedding_treedef, batched_goal_embedding_shape, goal_embedding_dtype, goal_filter_fn)
-
-
-# Run Experiment
-run_imgep_evaluation(jax_platform_name, seed, n_perturbations, evaluation_save_folder,
-                     intervention_params_library, intervention_fn,
-                     perturbation_generator, perturbation_fn,
-                     system_rollout, rollout_statistics_encoder,
-                     goal_embedding_encoder, out_sanity_check=True)
+    # Run Evaluation Pipeline
+    pipeline_config = evaluation_config.get_pipeline_config()
+    ## Set Log
+    log.reset()
+    log.set_directory(pipeline_config.evaluation_logging_save_folder)
+    run_imgep_evaluation(pipeline_config.jax_platform_name, pipeline_config.seed,
+                         pipeline_config.n_perturbations, pipeline_config.evaluation_data_save_folder,
+                         experiment_system_output_library, experiment_intervention_params_library, intervention_fn,
+                         perturbation_generator, perturbation_fn,
+                         system_rollout, rollout_statistics_encoder,
+                         out_sanity_check=True, save_modules=False)
+    ## Save Log
+    log.save()

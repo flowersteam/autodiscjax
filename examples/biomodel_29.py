@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from sbmltoodejax import jaxfuncs
 
 t0 = 0.0
+
 y0 = jnp.array([800.0, 0.0, 0.0, 0.0])
 y_indexes = {'M': 0, 'MpY': 1, 'Mpp': 2, 'MpT': 3}
 
@@ -18,15 +19,15 @@ c_indexes = {'MEK': 0, 'MKP3': 1, 'Km1': 2, 'kcat1': 3, 'Km2': 4, 'kcat2': 5, 'K
 class RateofSpeciesChange(eqx.Module):
 	n_reactions = 7
 	n_raterules = 0
+	stoichiometricMatrix = jnp.array([[-1.0, 0.0, -1.0, 0.0, 0.0, 1.0, 1.0], [1.0, -1.0, 0.0, 0.0, 0.0, 0.0, -1.0], [0.0, 1.0, 0.0, 1.0, -1.0, 0.0, 0.0], [0.0, 0.0, 1.0, -1.0, 1.0, -1.0, 0.0]], dtype=jnp.float32) 
+
 	@jit
 	def __call__(self, y, t, w, c):
 		rateRuleVector = jnp.array([0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
 
-		stoichiometricMatrix = jnp.array([[-1.0, 0.0, -1.0, 0.0, 0.0, 1.0, 1.0], [1.0, -1.0, 0.0, 0.0, 0.0, 0.0, -1.0], [0.0, 1.0, 0.0, 1.0, -1.0, 0.0, 0.0], [0.0, 0.0, 1.0, -1.0, 1.0, -1.0, 0.0]], dtype=jnp.float32)
-
 		reactionVelocities = self.calc_reaction_velocities(y, w, c, t)
 
-		rateOfSpeciesChange = stoichiometricMatrix @ reactionVelocities + rateRuleVector
+		rateOfSpeciesChange = self.stoichiometricMatrix @ reactionVelocities + rateRuleVector
 
 		return rateOfSpeciesChange
 
@@ -108,15 +109,14 @@ class ModelRollout(eqx.Module):
 		self.deltaT = deltaT
 		self.modelstepfunc = ModelStep(atol=atol, rtol=rtol, mxstep=mxstep)
 
-	def __call__(self, n_steps, y0=jnp.array([800.0, 0.0, 0.0, 0.0]), w0=jnp.array([]), c=jnp.array([180.0, 100.0, 410.0, 1.08, 40.0, 0.007, 20.0, 0.008, 300.0, 0.45, 22.0, 0.084, 18.0, 0.06, 34.0, 0.108, 40.0, 1.0]), t0=0.0 ):
+	def __call__(self, n_steps, y0=jnp.array([800.0, 0.0, 0.0, 0.0]), w0=jnp.array([]), c=jnp.array([180.0, 100.0, 410.0, 1.08, 40.0, 0.007, 20.0, 0.008, 300.0, 0.45, 22.0, 0.084, 18.0, 0.06, 34.0, 0.108, 40.0, 1.0]), t0=0.0):
 
 		@jit
 		def f(carry, x):
 			y, w, c, t = carry
-			return self.modelstepfunc(y, w, c, t, self.deltaT), (y, w)
-		(y, w, c, t), (ys, ws) = lax.scan(f, (y0, w0, c, t0), jnp.arange(n_steps))
-		ys = jnp.concatenate([y0[:, jnp.newaxis], jnp.moveaxis(ys, 0, -1)], axis=-1)
-		ws = jnp.concatenate([w0[:, jnp.newaxis], jnp.moveaxis(ws, 0, -1)], axis=-1)
-		times = jnp.arange(t0, t0 + (n_steps+1) * self.deltaT, self.deltaT)
-		return ys, ws, times
+			return self.modelstepfunc(y, w, c, t, self.deltaT), (y, w, t)
+		(y, w, c, t), (ys, ws, ts) = lax.scan(f, (y0, w0, c, t0), jnp.arange(n_steps))
+		ys = jnp.moveaxis(ys, 0, -1)
+		ws = jnp.moveaxis(ws, 0, -1)
+		return ys, ws, ts
 

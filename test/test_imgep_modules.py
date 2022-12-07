@@ -44,7 +44,7 @@ def test_im_flow_goal_generator():
 
     # Assert that all next goals are on the upper-right side of the grid
     assert next_goals.shape == (batch_size, gs_ndim)
-    assert (next_goals > jnp.array([0.4, 0.4])).all()
+    assert (next_goals[:, 0] > 0.5).all()
 
     # import matplotlib.pyplot as plt
     # plt.figure()

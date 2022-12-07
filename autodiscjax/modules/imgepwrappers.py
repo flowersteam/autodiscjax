@@ -2,34 +2,49 @@ import autodiscjax as adx
 from autodiscjax.modules.optimizers import BaseOptimizer
 from autodiscjax.utils.misc import filter, nearest_neighbors, normal, uniform
 import equinox as eqx
+import exputils.data.logging as log
 from functools import partial
-from jax import jit, vmap, value_and_grad
+from jax import jit, lax, value_and_grad, vmap
 import jax.tree_util as jtu
 import jax.numpy as jnp
 import jax.random as jrandom
+from jaxtyping import PyTree
 from typing import Callable
 
 class BaseGenerator(adx.Module):
+    low: PyTree = None
+    high: PyTree = None
+
     @jit
     def __call__(self, key):
         raise NotImplementedError
+
+    @jit
+    def clamp(self, out_pytree, is_leaf=None):
+        return jtu.tree_map(lambda val, low, high: jnp.minimum(jnp.maximum(val, low), high), out_pytree, self.low,
+                            self.high, is_leaf=is_leaf)
+
+class EmptyArrayGenerator(adx.Module):
+    @jit
+    def __call__(self, key):
+        return jtu.tree_map(lambda shape, dtype: jnp.empty(shape=shape, dtype=dtype), self.out_shape, self.out_dtype,
+                            is_leaf=lambda node: isinstance(node, tuple))
 
 class UniformRandomGenerator(BaseGenerator):
     uniform_fn: Callable
 
     def __init__(self, out_treedef, out_shape, out_dtype, low, high):
-        super().__init__(out_treedef, out_shape, out_dtype)
+        super().__init__(out_treedef, out_shape, out_dtype, low, high)
         self.uniform_fn = jit(jtu.Partial(uniform, low=low, high=high, out_treedef=self.out_treedef, out_shape=self.out_shape, out_dtype=self.out_dtype))
 
     def __call__(self, key):
         return self.uniform_fn(key)
 
-
 class NormalRandomGenerator(BaseGenerator):
     normal_fn: Callable
 
-    def __init__(self, out_treedef, out_shape, out_dtype, mean, std):
-        super().__init__(out_treedef, out_shape, out_dtype)
+    def __init__(self, out_treedef, out_shape, out_dtype, mean, std, low=None, high=None):
+        super().__init__(out_treedef, out_shape, out_dtype, low, high)
         self.normal_fn = jit(jtu.Partial(normal, mean=mean, std=std, out_treedef=self.out_treedef, out_shape=self.out_shape, out_dtype=self.out_dtype))
 
     def __call__(self, key):
@@ -79,13 +94,13 @@ class HypercubeGoalGenerator(BaseGoalGenerator):
 
 class BaseIM(eqx.Module):
     @jit
-    def __call__(self, target_goal_embedding_library, reached_goal_embedding_library, batch_size):
+    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, batch_size):
         raise NotImplementedError
 
 class LearningProgressIM(BaseIM):
     @partial(jit, static_argnames=("batch_size", ))
-    def __call__(self, target_goal_embedding_library, reached_goal_embedding_library, batch_size):
-        target_goals = jtu.tree_map(lambda node: node[-batch_size:], target_goal_embedding_library),
+    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, batch_size):
+        target_goals = jtu.tree_map(lambda node: node[-batch_size:], target_goal_embedding_library)
         reached_goals = jtu.tree_map(lambda node: node[-batch_size:], reached_goal_embedding_library)
         previously_reached_goals = jtu.tree_map(lambda node: node[:-batch_size], reached_goal_embedding_library)
 
@@ -96,13 +111,19 @@ class LearningProgressIM(BaseIM):
         previously_reached_goals_flat, previously_reached_goals_treedef = jtu.tree_flatten(previously_reached_goals)
         previously_reached_goals_flat = jnp.concatenate(previously_reached_goals_flat, axis=-1)
 
-        closest_intervention_ids, distances = nearest_neighbors(target_goals_flat, previously_reached_goals_flat, k=1)
-        previously_closest_goals_flat = previously_reached_goals_flat[closest_intervention_ids.squeeze()]
+        if len(previously_reached_goals_flat) > 0:
+            closest_intervention_ids, distances = nearest_neighbors(target_goals_flat, previously_reached_goals_flat,
+                                                                    k=min(len(previously_reached_goals_flat), 1))
+            previously_closest_goals_flat = previously_reached_goals_flat[closest_intervention_ids.squeeze()]
 
-        def LP(goal_points, starting_points, reached_points):
-            return jnp.square(goal_points - starting_points).sum(-1) - jnp.square(goal_points - reached_points).sum(-1)
+            def LP(goal_points, starting_points, reached_points):
+                return jnp.sqrt(jnp.square(goal_points - starting_points).sum(-1)) - jnp.sqrt(jnp.square(goal_points - reached_points).sum(-1))
 
-        IM_vals, IM_grads = vmap(value_and_grad(LP, 0), in_axes=(0, 0, 0))(target_goals_flat, previously_closest_goals_flat, reached_goals_flat)
+            IM_vals, IM_grads = vmap(value_and_grad(LP, 0), in_axes=(0, 0, 0))(target_goals_flat, previously_closest_goals_flat, reached_goals_flat)
+
+        else:
+            IM_vals = jnp.zeros(shape=(batch_size, ), dtype=jnp.float32)
+            IM_grads = jrandom.uniform(key, shape=reached_goals_flat.shape, dtype=reached_goals_flat.dtype)
 
         return IM_vals, IM_grads
 
@@ -139,7 +160,12 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
 
         # Select goals with highest IM, duplicate them, and flow them along IM_grad (with some flow noise)
         selected_popsize = int(batch_size * self.selected_popsize)
-        IM_vals, IM_grads = self.IM_fn(target_goal_embedding_library, reached_goal_embedding_library, batch_size)
+
+        key, subkey = jrandom.split(key)
+        IM_vals, IM_grads = self.IM_fn(subkey, target_goal_embedding_library, reached_goal_embedding_library, batch_size)
+        log.add_value('IM_vals', IM_vals)
+        log.add_value('IM_grads', IM_grads)
+
         selected_pop_ids = jnp.argsort(IM_vals)[-selected_popsize:]
         n_repeats = (batch_size - random_popsize) // selected_popsize
         n_add = (batch_size - random_popsize) - n_repeats * selected_popsize
@@ -149,7 +175,7 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
         grad_updates = self.IM_grad_scaling * IM_grads[flowed_pop_ids]
         grad_updates_flat, _ = jtu.tree_flatten(grad_updates)
         grad_updates = self.out_treedef.unflatten(grad_updates_flat)
-        grad_updates = jtu.tree_map(lambda gu, min, max: gu*(max-min), grad_updates, library_min, library_max)
+        #grad_updates = jtu.tree_map(lambda gu, min, max: gu*(max-min), grad_updates, library_min, library_max)
         key, subkey = jrandom.split(key)
         noise_std = jtu.tree_map(lambda min, max: self.flow_noise*(max-min), library_min, library_max)
         zero_mean = jtu.tree_map(lambda sig: jnp.zeros_like(sig), noise_std)
@@ -189,19 +215,19 @@ class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
 
 class BaseGoalAchievementLoss(eqx.Module):
     @jit
-    def __call(self, reached_goals_embeddings, target_goals_embeddings):
+    def __call__(self, reached_goals_embeddings, target_goals_embeddings):
         raise NotImplementedError
 
 class L2GoalAchievementLoss(BaseGoalAchievementLoss):
     @jit
-    def __call(self, reached_goals_embeddings, target_goals_embeddings):
+    def __call__(self, reached_goals_embeddings, target_goals_embeddings):
         return jnp.square(reached_goals_embeddings - target_goals_embeddings).sum()
 
 class BaseGCInterventionOptimizer(adx.Module):
     optimizer: BaseOptimizer
 
-    @jit
     def __call__(self, key, intervention_fn, interventions_params, system_rollout, goal_embedding_encoder, goal_achievement_loss, target_goals_embeddings):
+
         @jit
         def loss_fn(key, params):
             key, subkey = jrandom.split(key)
