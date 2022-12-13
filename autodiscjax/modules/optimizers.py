@@ -139,7 +139,7 @@ class OpenESOptimizer(SGDOptimizer):
     n_workers: int = eqx.static_field()
     noise_std: DictTree
 
-    def __init__(self, n_optim_steps: int, lr: DictTree, n_workers: int, noise_std: DictTree):
+    def __init__(self, low, high, n_optim_steps: int, lr: DictTree, n_workers: int, noise_std: DictTree):
         """
         Args:
             n_optim_steps: int
@@ -147,7 +147,7 @@ class OpenESOptimizer(SGDOptimizer):
             noise_std: DictTree with same structure as params
             lr: DictTree with same structure as params
         """
-        super().__init__(n_optim_steps, lr)
+        super().__init__(low, high, n_optim_steps, lr)
         self.n_workers = n_workers
         self.noise_std = noise_std
 
@@ -165,8 +165,7 @@ class OpenESOptimizer(SGDOptimizer):
         subkeys = jrandom.split(key, 1+self.n_workers)
         key, subkeys = subkeys[0], subkeys[1:]
         losses = vmap(loss_fn)(subkeys, worker_params)
-        losses_flat, _ = jtu.tree_flatten(losses)
-        losses = out_treedef.unflatten(losses_flat)
+        losses = jtu.tree_map(lambda node: losses, self.noise_std)
         epsilons = jtu.tree_map(lambda p_new, p, sigma: (p_new - p) / sigma, worker_params, params, self.noise_std)
         grads = jtu.tree_map(lambda l, eps, sigma: (l.reshape((len(l), ) + (1, ) * len(eps.shape[1:])) * eps).sum(0) / (self.n_workers * sigma), losses, epsilons, self.noise_std)
 
