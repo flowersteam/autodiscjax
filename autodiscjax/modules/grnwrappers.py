@@ -3,7 +3,6 @@ from autodiscjax.modules.imgepwrappers import BaseSystemRollout, BaseRolloutStat
 from autodiscjax.utils.misc import filter_update, hardplus, normal
 from autodiscjax.utils import timeseries
 import equinox as eqx
-import exputils.data.logging as log
 from jax import jit, lax, vmap
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -46,7 +45,7 @@ class NoisePerturbationGenerator(adx.Module):
 class WallPerturbationGenerator(adx.Module):
     """
     out_treedef: out_params.y[idx] = Array for idx in [node1, node2] where wall is defined
-    out_shape: Array of shape (batch_size, n_walls, 2, len(time_intervals))
+    out_shape: Array of shape (..., n_walls, 2, len(time_intervals))
     """
     walls_target_intersection_steps: Sequence[int]
     walls_length: Array
@@ -62,16 +61,16 @@ class WallPerturbationGenerator(adx.Module):
 
 
     @jit
-    def __call__(self, key, system_outputs_library):
+    def __call__(self, key, ys):
         out_params = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=shape, dtype=dtype), self.out_shape,
                            self.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
         out_shape = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))[0][0]
 
         target_node_idx, other_node_idx = out_params.y.keys()
-        walls_target_centers = system_outputs_library.ys[..., target_node_idx, self.walls_target_intersection_steps]
-        walls_other_centers = system_outputs_library.ys[..., other_node_idx, self.walls_target_intersection_steps]
-        walls_length = self.walls_length * (system_outputs_library.ys[..., other_node_idx, :].max(-1) - system_outputs_library.ys[..., other_node_idx, :].min(-1))[..., jnp.newaxis]
-        out_params.y[target_node_idx] = jnp.repeat(walls_target_centers[..., jnp.newaxis, jnp.newaxis], 2, 2)
+        walls_target_centers = ys[..., target_node_idx, self.walls_target_intersection_steps]
+        walls_other_centers = ys[..., other_node_idx, self.walls_target_intersection_steps]
+        walls_length = self.walls_length * (ys[..., other_node_idx, :].max(-1) - ys[..., other_node_idx, :].min(-1))[..., jnp.newaxis]
+        out_params.y[target_node_idx] = jnp.repeat(walls_target_centers[..., jnp.newaxis, jnp.newaxis], 2, -2)
         out_params.y[other_node_idx] = jnp.stack([walls_other_centers - walls_length / 2.,
                                                   walls_other_centers + walls_length / 2.], axis=-1).reshape(out_shape) * \
                                        jnp.ones(out_shape)
@@ -260,8 +259,7 @@ class GRNRollout(BaseSystemRollout):
         cs = jnp.moveaxis(cs, 0, -1)
 
         rollout_end = time.time()
-        log.add_value('system_rollout_time', rollout_end-rollout_start)
-        
+
         outputs = adx.DictTree()
         outputs.ys = ys
         outputs.ws = ws

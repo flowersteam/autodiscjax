@@ -5,7 +5,6 @@ batch_size = None
 
 def get_perturbation_config():
     config = Dict()
-    config.batch_size = batch_size
 
     # config.perturbation_type = "add"
     # config.perturbed_intervals = [[0, 10]]

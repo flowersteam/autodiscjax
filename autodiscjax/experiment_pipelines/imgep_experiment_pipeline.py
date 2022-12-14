@@ -2,12 +2,15 @@ import autodiscjax as adx
 import equinox as eqx
 from autodiscjax.utils.accessors import merge_concatenate
 import jax
+from jax import vmap
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
 import os
 
-def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: int, n_imgep_batches: int, save_folder: str,
+
+def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: int, n_imgep_batches: int,
+                         batch_size: int, save_folder: str,
                          random_intervention_generator: eqx.Module, intervention_fn: eqx.Module,
                          perturbation_generator: eqx.Module, perturbation_fn: eqx.Module,
                          system_rollout: eqx.Module, rollout_statistics_encoder: eqx.Module,
@@ -16,110 +19,142 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
                          goal_embedding_encoder: eqx.Module,
                          goal_achievement_loss: eqx.Module,
                          out_sanity_check=True, save_modules=False):
-    
     # Set platform device
     jax.config.update("jax_platform_name", jax_platform_name)
 
     # Set random seed
     key = jrandom.PRNGKey(seed)
 
-
     if out_sanity_check:
         assert (goal_generator.out_treedef == goal_embedding_encoder.out_treedef) \
                and (goal_generator.out_shape == goal_embedding_encoder.out_shape) \
-               and (goal_generator.out_dtype == goal_embedding_encoder.out_dtype),  \
+               and (goal_generator.out_dtype == goal_embedding_encoder.out_dtype), \
             "goal generator and goal encoder must operate in same spaces"
 
         assert (random_intervention_generator.out_treedef == gc_intervention_optimizer.out_treedef) \
                and (random_intervention_generator.out_shape == gc_intervention_optimizer.out_shape) \
-               and (random_intervention_generator.out_dtype == gc_intervention_optimizer.out_dtype),  \
+               and (random_intervention_generator.out_dtype == gc_intervention_optimizer.out_dtype), \
             "random intervention generator and goal-conditionned intervention operator must operate in same spaces"
 
     # Initialize History
     history = adx.DictTree()
-    history.target_goal_embedding_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape[1:], dtype=dtype),
-                                                         goal_generator.out_shape, goal_generator.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
-    history.source_intervention_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape[1:], dtype=dtype),
-                                                       gc_intervention_selector.out_shape, gc_intervention_selector.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
-    history.intervention_params_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape[1:], dtype=dtype),
-                                                       random_intervention_generator.out_shape, random_intervention_generator.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
-    history.perturbation_params_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape[1:], dtype=dtype),
-                                                       perturbation_generator.out_shape, perturbation_generator.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
-    history.system_output_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape[1:], dtype=dtype),
-                                                       system_rollout.out_shape, system_rollout.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
-    history.reached_goal_embedding_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape[1:], dtype=dtype),
-                                                       goal_embedding_encoder.out_shape, goal_embedding_encoder.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
-    history.system_rollout_statistics_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape[1:], dtype=dtype),
-                                                       rollout_statistics_encoder.out_shape, rollout_statistics_encoder.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
-    
+    history.target_goal_embedding_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape, dtype=dtype),
+                                                         goal_generator.out_shape, goal_generator.out_dtype,
+                                                         is_leaf=lambda node: isinstance(node, tuple))
+    history.source_intervention_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape, dtype=dtype),
+                                                       gc_intervention_selector.out_shape,
+                                                       gc_intervention_selector.out_dtype,
+                                                       is_leaf=lambda node: isinstance(node, tuple))
+    history.intervention_params_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape, dtype=dtype),
+                                                       random_intervention_generator.out_shape,
+                                                       random_intervention_generator.out_dtype,
+                                                       is_leaf=lambda node: isinstance(node, tuple))
+    history.perturbation_params_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape, dtype=dtype),
+                                                       perturbation_generator.out_shape,
+                                                       perturbation_generator.out_dtype,
+                                                       is_leaf=lambda node: isinstance(node, tuple))
+    history.system_output_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape, dtype=dtype),
+                                                 system_rollout.out_shape, system_rollout.out_dtype,
+                                                 is_leaf=lambda node: isinstance(node, tuple))
+    history.reached_goal_embedding_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape, dtype=dtype),
+                                                          goal_embedding_encoder.out_shape,
+                                                          goal_embedding_encoder.out_dtype,
+                                                          is_leaf=lambda node: isinstance(node, tuple))
+    history.system_rollout_statistics_library = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=(0,) + shape, dtype=dtype),
+                                                             rollout_statistics_encoder.out_shape,
+                                                             rollout_statistics_encoder.out_dtype,
+                                                             is_leaf=lambda node: isinstance(node, tuple))
+
+    # Vmap modules
+    batched_random_intervention_generator = vmap(random_intervention_generator, in_axes=(0,), out_axes=0)
+    batched_perturbation_generator = vmap(perturbation_generator, in_axes=(0,), out_axes=0)
+    batched_system_rollout = vmap(system_rollout, in_axes=(0, None, 0, None, 0), out_axes=0)
+    batched_rollout_statistics_encoder = vmap(rollout_statistics_encoder, in_axes=(0, 0), out_axes=0)
+    batched_goal_generator = vmap(goal_generator, in_axes=(0, None, None, None), out_axes=0)
+    batched_gc_intervention_selector = vmap(gc_intervention_selector, in_axes=(0, 0, None, None), out_axes=0)
+    batched_gc_intervention_optimizer = vmap(gc_intervention_optimizer, in_axes=(0, None, 0, None, None, None, 0),
+                                             out_axes=0)
+    batched_goal_embedding_encoder = vmap(goal_embedding_encoder, in_axes=(0, 0), out_axes=0)
+
     # Run Exploration
     for iteration_idx in range(n_random_batches + n_imgep_batches):
 
         if iteration_idx < n_random_batches:
             print("Generate random intervention")
             # generate random intervention
-            key, subkey = jrandom.split(key)
-            interventions_params = random_intervention_generator(subkey)
+            key, *subkeys = jrandom.split(key, num=batch_size + 1)
+            interventions_params = batched_random_intervention_generator(jnp.array(subkeys))
             if out_sanity_check:
-                random_intervention_generator.out_sanity_check(interventions_params)
+                vmap(random_intervention_generator.out_sanity_check)(interventions_params)
 
             # empty arrays to fill history
-            target_goals_embeddings = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=shape, dtype=dtype),
-                                                         goal_generator.out_shape, goal_generator.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
-            source_interventions_ids = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=shape, dtype=dtype),
-                                                       gc_intervention_selector.out_shape, gc_intervention_selector.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
+            target_goals_embeddings = jtu.tree_map(
+                lambda shape, dtype: jnp.empty(shape=(batch_size,) + shape, dtype=dtype),
+                goal_generator.out_shape, goal_generator.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
+            source_interventions_ids = jtu.tree_map(
+                lambda shape, dtype: jnp.empty(shape=(batch_size,) + shape, dtype=dtype),
+                gc_intervention_selector.out_shape, gc_intervention_selector.out_dtype,
+                is_leaf=lambda node: isinstance(node, tuple))
 
         else:
             # sample goal
             print("Generate target goals")
-            key, subkey = jrandom.split(key)
-            target_goals_embeddings = goal_generator(subkey, history.target_goal_embedding_library, history.reached_goal_embedding_library, history.system_rollout_statistics_library)
+            key, *subkeys = jrandom.split(key, num=batch_size + 1)
+            target_goals_embeddings = batched_goal_generator(jnp.array(subkeys), history.target_goal_embedding_library,
+                                                             history.reached_goal_embedding_library,
+                                                             history.system_rollout_statistics_library)
             if out_sanity_check:
-                goal_generator.out_sanity_check(target_goals_embeddings)
+                vmap(goal_generator.out_sanity_check)(target_goals_embeddings)
 
             # goal-conditioned selection of source intervention from history
             print("Select closes intervention")
-            key, subkey = jrandom.split(key)
-            source_interventions_ids = gc_intervention_selector(subkey, target_goals_embeddings, history.reached_goal_embedding_library, history.system_rollout_statistics_library)
+            key, *subkeys = jrandom.split(key, num=batch_size + 1)
+            source_interventions_ids = batched_gc_intervention_selector(jnp.array(subkeys), target_goals_embeddings,
+                                                                        history.reached_goal_embedding_library,
+                                                                        history.system_rollout_statistics_library)
             if out_sanity_check:
-                gc_intervention_selector.out_sanity_check(source_interventions_ids)
-            interventions_params = jtu.tree_map(lambda x: x[source_interventions_ids], history.intervention_params_library)
+                vmap(gc_intervention_selector.out_sanity_check)(source_interventions_ids)
+            interventions_params = jtu.tree_map(lambda x: x[source_interventions_ids],
+                                                history.intervention_params_library)
 
             # goal-conditioned optimization of source intervention
             print("Optimize the selected intervention")
-            key, subkey = jrandom.split(key)
-            interventions_params = gc_intervention_optimizer(subkey, intervention_fn, interventions_params, system_rollout, goal_embedding_encoder, goal_achievement_loss, target_goals_embeddings)
+            key, *subkeys = jrandom.split(key, num=batch_size + 1)
+            interventions_params = batched_gc_intervention_optimizer(jnp.array(subkeys), intervention_fn,
+                                                                     interventions_params, system_rollout,
+                                                                     goal_embedding_encoder, goal_achievement_loss,
+                                                                     target_goals_embeddings)
             if out_sanity_check:
-                gc_intervention_optimizer.out_sanity_check(interventions_params)
+                vmap(gc_intervention_optimizer.out_sanity_check)(interventions_params)
 
         # generate perturbation
         print("Generate the perturbation")
-        key, subkey = jrandom.split(key)
-        perturbations_params = perturbation_generator(subkey)
+        key, *subkeys = jrandom.split(key, num=batch_size + 1)
+        perturbations_params = batched_perturbation_generator(jnp.array(subkeys))
         if out_sanity_check:
-            perturbation_generator.out_sanity_check(perturbations_params)
+            vmap(perturbation_generator.out_sanity_check)(perturbations_params)
 
         # rollout system
         print("Rollout the system")
-        key, subkey = jrandom.split(key)
-        system_outputs = system_rollout(subkey, intervention_fn, interventions_params, perturbation_fn, perturbations_params)
+        key, *subkeys = jrandom.split(key, num=batch_size + 1)
+        system_outputs = batched_system_rollout(jnp.array(subkeys), intervention_fn, interventions_params,
+                                                perturbation_fn, perturbations_params)
         if out_sanity_check:
-            system_rollout.out_sanity_check(system_outputs)
+            vmap(system_rollout.out_sanity_check)(system_outputs)
 
         # represent outputs -> goals
         print("Encode the goal")
-        key, subkey = jrandom.split(key)
-        reached_goals_embeddings = goal_embedding_encoder(subkey, system_outputs)
+        key, *subkeys = jrandom.split(key, num=batch_size + 1)
+        reached_goals_embeddings = batched_goal_embedding_encoder(jnp.array(subkeys), system_outputs)
         if out_sanity_check:
-            goal_embedding_encoder.out_sanity_check(reached_goals_embeddings)
+            vmap(goal_embedding_encoder.out_sanity_check)(reached_goals_embeddings)
 
         # represent outputs -> other statistics
         print("Encode the rollout statistics")
-        key, subkey = jrandom.split(key)
-        system_rollouts_statistics = rollout_statistics_encoder(subkey, system_outputs)
+        key, *subkeys = jrandom.split(key, num=batch_size + 1)
+        system_rollouts_statistics = batched_rollout_statistics_encoder(jnp.array(subkeys), system_outputs)
         if out_sanity_check:
-            rollout_statistics_encoder.out_sanity_check(system_rollouts_statistics)
-
+            vmap(rollout_statistics_encoder.out_sanity_check)(system_rollouts_statistics)
 
         # Append to history
         history = history.update_node("target_goal_embedding_library", target_goals_embeddings, merge_concatenate)
@@ -129,7 +164,6 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         history = history.update_node("system_output_library", system_outputs, merge_concatenate)
         history = history.update_node("reached_goal_embedding_library", reached_goals_embeddings, merge_concatenate)
         history = history.update_node("system_rollout_statistics_library", system_rollouts_statistics, merge_concatenate)
-
 
     # Save history and modules
     history.save(os.path.join(save_folder, "experiment_history.pickle"), overwrite=True)

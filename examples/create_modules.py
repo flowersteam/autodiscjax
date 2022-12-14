@@ -24,9 +24,6 @@ def create_system_rollout_module(system_rollout_config):
     w0 = getattr(module, "w0")
     c = getattr(module, "c")
     t0 = getattr(module, "t0")
-    y0 = jnp.tile(y0, (system_rollout_config.batch_size, 1))
-    w0 = jnp.tile(w0, (system_rollout_config.batch_size, 1))
-    c = jnp.tile(c, (system_rollout_config.batch_size, 1))
     system_rollout = grn.GRNRollout(n_steps=system_rollout_config.n_system_steps, y0=y0, w0=w0, c=c, t0=t0,
                                     deltaT=system_rollout_config.deltaT, grn_step=grnstep)
     return system_rollout
@@ -47,20 +44,18 @@ def create_intervention_module(intervention_config):
         intervention_params_tree.y[y_idx] = "placeholder"
     intervention_params_treedef = jtu.tree_structure(intervention_params_tree)
     intervention_params_shape = jtu.tree_map(lambda _: (len(intervention_config.controlled_intervals),), intervention_params_tree)
-    batched_intervention_params_shape = jtu.tree_map(lambda shape: (intervention_config.batch_size,) + shape, intervention_params_shape,
-                                                     is_leaf=lambda node: isinstance(node, tuple))
     intervention_params_dtype = jtu.tree_map(lambda _: jnp.float32, intervention_params_tree)
 
     intervention_low = DictTree(intervention_config.low)
     intervention_low = jtu.tree_map(lambda val, shape, dtype: val * jnp.ones(shape=shape, dtype=dtype),
-                                    intervention_low, batched_intervention_params_shape,
+                                    intervention_low, intervention_params_shape,
                                     intervention_params_dtype)
     intervention_high = DictTree(intervention_config.high)
     intervention_high = jtu.tree_map(lambda val, shape, dtype: val * jnp.ones(shape=shape, dtype=dtype),
-                                     intervention_high, batched_intervention_params_shape,
+                                     intervention_high, intervention_params_shape,
                                      intervention_params_dtype)
     random_intervention_generator = imgep.UniformRandomGenerator(intervention_params_treedef,
-                                                                 batched_intervention_params_shape,
+                                                                 intervention_params_shape,
                                                                  intervention_params_dtype,
                                                                  intervention_low, intervention_high)
     return random_intervention_generator, intervention_fn
@@ -85,22 +80,19 @@ def create_perturbation_module(perturbation_config):
         perturbation_params_treedef = jtu.tree_structure(perturbation_params_tree)
         perturbation_params_shape = jtu.tree_map(lambda _: (len(perturbation_config.perturbed_intervals),),
                                                  perturbation_params_tree)
-        batched_perturbation_params_shape = jtu.tree_map(lambda shape: (perturbation_config.batch_size,) + shape,
-                                                         perturbation_params_shape,
-                                                         is_leaf=lambda node: isinstance(node, tuple))
         perturbation_params_dtype = jtu.tree_map(lambda _: jnp.float32, perturbation_params_tree)
 
 
         perturbation_generator = grn.NoisePerturbationGenerator(perturbation_params_treedef,
-                                                             batched_perturbation_params_shape,
+                                                             perturbation_params_shape,
                                                              perturbation_params_dtype,
                                                              std=perturbation_config.std)
 
     elif perturbation_config.perturbation_type == "wall":
         if perturbation_config.wall_type == "elastic":
-            collision_fn = jtu.Partial(vmap(vmap(wall_elastic_collision, in_axes=(None, None, 0, 0), out_axes=(0, 0)), in_axes=(0, 0, 0, 0), out_axes=(0, 0)))
+            collision_fn = jtu.Partial(vmap(wall_elastic_collision, in_axes=(None, None, 0, 0), out_axes=(0, 0)))
         elif perturbation_config.wall_type == "force_field":
-            collision_fn = jtu.Partial(vmap(vmap(wall_force_field_collision, in_axes=(None, None, 0, 0), out_axes=(0, 0)), in_axes=(0, 0, 0, 0), out_axes=(0, 0)))
+            collision_fn = jtu.Partial(vmap(wall_force_field_collision, in_axes=(None, None, 0, 0), out_axes=(0, 0)))
         perturbation_fn = grn.PiecewiseWallCollisionIntervention(
             time_to_interval_fn=grn.TimeToInterval(intervals=perturbation_config.perturbed_intervals), collision_fn=collision_fn)
 
@@ -111,14 +103,11 @@ def create_perturbation_module(perturbation_config):
         n_walls = len(perturbation_config.walls_target_intersection_steps)
         perturbation_params_shape = jtu.tree_map(lambda _: (n_walls, 2, len(perturbation_config.perturbed_intervals),),
                                                  perturbation_params_tree)
-        batched_perturbation_params_shape = jtu.tree_map(lambda shape: (perturbation_config.batch_size,) + shape,
-                                                         perturbation_params_shape,
-                                                         is_leaf=lambda node: isinstance(node, tuple))
         perturbation_params_dtype = jtu.tree_map(lambda _: jnp.float32, perturbation_params_tree)
 
 
         perturbation_generator = grn.WallPerturbationGenerator(perturbation_params_treedef,
-                                                               batched_perturbation_params_shape,
+                                                               perturbation_params_shape,
                                                                perturbation_params_dtype,
                                                                perturbation_config.walls_target_intersection_steps,
                                                                perturbation_config.walls_length)
@@ -135,11 +124,9 @@ def create_goal_embedding_encoder_module(goal_embedding_encoder_config):
     goal_embedding_tree = "placeholder"
     goal_embedding_treedef = jtu.tree_structure(goal_embedding_tree)
     goal_embedding_shape = jtu.tree_map(lambda _: (len(goal_embedding_encoder_config.observed_node_ids),), goal_embedding_tree)
-    batched_goal_embedding_shape = jtu.tree_map(lambda shape: (goal_embedding_encoder_config.batch_size,) + shape, goal_embedding_shape,
-                                                is_leaf=lambda node: isinstance(node, tuple))
     goal_embedding_dtype = jtu.tree_map(lambda _: jnp.float32, goal_embedding_tree)
-    goal_filter_fn = jtu.Partial(lambda system_outputs: system_outputs.ys[:, goal_embedding_encoder_config.observed_node_ids, -1])
-    goal_embedding_encoder = imgep.FilterGoalEmbeddingEncoder(goal_embedding_treedef, batched_goal_embedding_shape,
+    goal_filter_fn = jtu.Partial(lambda system_outputs: system_outputs.ys[..., goal_embedding_encoder_config.observed_node_ids, -1])
+    goal_embedding_encoder = imgep.FilterGoalEmbeddingEncoder(goal_embedding_treedef, goal_embedding_shape,
                                                               goal_embedding_dtype, goal_filter_fn)
     return goal_embedding_encoder
 
@@ -152,7 +139,8 @@ def create_goal_generator_module(goal_embedding_encoder, goal_generator_config):
     elif goal_generator_config.generator_type == "IMFlow_sampling":
         goal_generator = imgep.IMFlowGoalGenerator(goal_embedding_encoder.out_treedef, goal_embedding_encoder.out_shape, goal_embedding_encoder.out_dtype,
                                                    imgep.LearningProgressIM(), goal_generator_config.IM_grad_scaling,
-                                                   goal_generator_config.random_popsize, goal_generator_config.selected_popsize, goal_generator_config.flow_noise)
+                                                   goal_generator_config.random_proba, goal_generator_config.flow_noise,
+                                                   goal_generator_config.time_window)
     else:
         raise ValueError
 
@@ -166,10 +154,10 @@ def create_goal_achievement_loss_module(goal_achievement_loss_config):
 def create_gc_intervention_selector_module(gc_intervention_selector_config):
     intervention_selector_tree = "placeholder"
     intervention_selector_treedef = jtu.tree_structure(intervention_selector_tree)
-    batched_intervention_selector_shape = jtu.tree_map(lambda _: (gc_intervention_selector_config.batch_size,), intervention_selector_tree)
+    intervention_selector_shape = jtu.tree_map(lambda _: (), intervention_selector_tree)
     intervention_selector_dtype = jtu.tree_map(lambda _: jnp.int32, intervention_selector_tree)
     gc_intervention_selector = imgep.NearestNeighborInterventionSelector(intervention_selector_treedef,
-                                                                         batched_intervention_selector_shape,
+                                                                         intervention_selector_shape,
                                                                          intervention_selector_dtype, gc_intervention_selector_config.k)
     return gc_intervention_selector
 
@@ -182,7 +170,7 @@ def create_gc_intervention_optimizer_module(random_intervention_generator, gc_in
                                                 lambda low, high: gc_intervention_optimizer_config.lr * (high - low),
                                                 random_intervention_generator.low,
                                                 random_intervention_generator.high))
-    
+
     elif gc_intervention_optimizer_config.optimizer_type == "OpenES":
         optimizer = optimizers.OpenESOptimizer(random_intervention_generator.low,
                                                random_intervention_generator.high,
@@ -212,7 +200,7 @@ def create_gc_intervention_optimizer_module(random_intervention_generator, gc_in
 
     else:
         raise ValueError
-    
+
     gc_intervention_optimizer = imgep.BaseGCInterventionOptimizer(random_intervention_generator.out_treedef,
                                                                   random_intervention_generator.out_shape,
                                                                   random_intervention_generator.out_dtype,

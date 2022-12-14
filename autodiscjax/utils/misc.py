@@ -45,11 +45,11 @@ def nearest_neighbors(Y, X, k):
     X_nearest_ids: Array[Ny, k] - matrix of the  k closest point ids in X (for each target point in Y),
     distances: Array[Ny, k] - corresponding distances
     """
-    Ny, Dy = Y.shape
-    Ny, Dx = X.shape
+    *_, Dy = Y.shape
+    *_, Dx = X.shape
     assert Dy == Dx, "Points in X and Y must lie in the same D-dimensional space"
 
-    distance_matrix = jnp.sum((Y[:, jnp.newaxis, :] - X[jnp.newaxis, :, :])**2, axis=-1)
+    distance_matrix = jnp.sum((Y[..., jnp.newaxis, :] - X[jnp.newaxis, ...])**2, axis=-1).squeeze()
     nearest_distances_reverse, X_nearest_ids = lax.top_k(jnp.reciprocal(distance_matrix), k)
     return X_nearest_ids, jnp.reciprocal(nearest_distances_reverse)
 

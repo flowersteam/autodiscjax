@@ -2,13 +2,12 @@ import autodiscjax as adx
 from autodiscjax.modules.optimizers import BaseOptimizer
 from autodiscjax.utils.misc import filter, nearest_neighbors, normal, uniform
 import equinox as eqx
-import exputils.data.logging as log
 from functools import partial
-from jax import jit, lax, value_and_grad, vmap
+from jax import jit, lax, value_and_grad, vmap, nn
 import jax.tree_util as jtu
 import jax.numpy as jnp
 import jax.random as jrandom
-from jaxtyping import PyTree
+from jaxtyping import Array, PyTree
 from typing import Callable
 
 class BaseGenerator(adx.Module):
@@ -94,15 +93,15 @@ class HypercubeGoalGenerator(BaseGoalGenerator):
 
 class BaseIM(eqx.Module):
     @jit
-    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, batch_size):
+    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, time_window):
         raise NotImplementedError
 
 class LearningProgressIM(BaseIM):
     @partial(jit, static_argnames=("batch_size", ))
-    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, batch_size):
-        target_goals = jtu.tree_map(lambda node: node[-batch_size:], target_goal_embedding_library)
-        reached_goals = jtu.tree_map(lambda node: node[-batch_size:], reached_goal_embedding_library)
-        previously_reached_goals = jtu.tree_map(lambda node: node[:-batch_size], reached_goal_embedding_library)
+    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, time_window):
+        target_goals = jtu.tree_map(lambda node: node[time_window], target_goal_embedding_library)
+        reached_goals = jtu.tree_map(lambda node: node[time_window], reached_goal_embedding_library)
+        previously_reached_goals = jtu.tree_map(lambda node: node[time_window], reached_goal_embedding_library)
 
         target_goals_flat, target_goals_treedef = jtu.tree_flatten(target_goals)
         target_goals_flat = jnp.concatenate(target_goals_flat, axis=-1)
@@ -122,7 +121,7 @@ class LearningProgressIM(BaseIM):
             IM_vals, IM_grads = vmap(value_and_grad(LP, 0), in_axes=(0, 0, 0))(target_goals_flat, previously_closest_goals_flat, reached_goals_flat)
 
         else:
-            IM_vals = jnp.zeros(shape=(batch_size, ), dtype=jnp.float32)
+            IM_vals = jnp.zeros(shape=(len(time_window), ), dtype=jnp.float32)
             IM_grads = jrandom.uniform(key, shape=reached_goals_flat.shape, dtype=reached_goals_flat.dtype)
 
         return IM_vals, IM_grads
@@ -132,60 +131,58 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
     IM_fn: function that returns tensors IM_val, IM_grad. Example: LearningProgressIM()
     """
     IM_fn: BaseIM
+    IM_val_scaling: float = 10
     IM_grad_scaling: float = 0.4
-    random_popsize: float = 0.2
-    selected_popsize: float = 0.2
+    random_proba: float = 0.2
     flow_noise: float = 0.1
+    time_window: Array = jnp.r_[-100:0]
 
-    def __init__(self, out_treedef, out_shape, out_dtype, IM_fn=LearningProgressIM(), IM_grad_scaling=0.4, random_popsize=0.2, selected_popsize=0.2, flow_noise=0.1):
+    def __init__(self, out_treedef, out_shape, out_dtype, IM_fn=LearningProgressIM(), IM_val_scaling=10,
+                 IM_grad_scaling=0.4, random_proba=0.2, flow_noise=0.1, time_window=jnp.r_[-100:0]):
         super().__init__(out_treedef, out_shape, out_dtype)
         self.IM_fn = IM_fn
+        self.IM_val_scaling = IM_val_scaling
         self.IM_grad_scaling = IM_grad_scaling
-        self.random_popsize = random_popsize
-        self.selected_popsize = selected_popsize
+        self.time_window = time_window
+        self.random_proba = random_proba
         self.flow_noise = flow_noise
+
 
     #@eqx.filter_jit
     def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, system_rollout_statistics_library=None):
-        out_batched_shape_flat, _ = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))
-        batch_size = out_batched_shape_flat[0][0]
 
-        # Generate random goals
-        random_popsize = int(batch_size * self.random_popsize)
-        random_out_shape = jtu.tree_map(lambda shape: (random_popsize, ) + shape[1:], self.out_shape, is_leaf=lambda node: isinstance(node, tuple))
         library_min = jtu.tree_map(lambda x: x.min(0), reached_goal_embedding_library)
         library_max = jtu.tree_map(lambda x: x.max(0), reached_goal_embedding_library)
+
+        def random_sample(key):
+            return uniform(key, library_min, library_max, self.out_treedef, self.out_shape, self.out_dtype)
+
+        def IM_sample(key):
+
+            key, subkey = jrandom.split(key)
+            IM_vals, IM_grads = self.IM_fn(subkey, target_goal_embedding_library, reached_goal_embedding_library, self.time_window) #TODO: replace batch size with time window
+            p = nn.softmax(self.IM_val_scaling*IM_vals/jnp.linalg.norm(library_max-library_min))
+
+            key, subkey = jrandom.split(key)
+            starting_goal_idx = jrandom.choice(subkey, self.time_window, shape=(), p=p)
+            starting_goal = jtu.tree_map(lambda node: node[starting_goal_idx], reached_goal_embedding_library)
+            grad_update = self.IM_grad_scaling * IM_grads[starting_goal_idx]
+            grad_update_flat, _ = jtu.tree_flatten(grad_update)
+            grad_update = self.out_treedef.unflatten(grad_update_flat)
+
+            key, subkey = jrandom.split(key)
+            noise_std = jtu.tree_map(lambda min, max: self.flow_noise * (max - min), library_min, library_max)
+            zero_mean = jtu.tree_map(lambda node: jnp.zeros_like(node), starting_goal)
+            noise_update = normal(subkey, zero_mean, noise_std, self.out_treedef, self.out_shape, self.out_dtype)
+
+            flowed_goal = jtu.tree_map(lambda s, gu, nu: s + gu + nu, starting_goal, grad_update, noise_update)
+            return flowed_goal
+
         key, subkey = jrandom.split(key)
-        random_next_goals = uniform(subkey, library_min, library_max, self.out_treedef, random_out_shape, self.out_dtype)
-
-        # Select goals with highest IM, duplicate them, and flow them along IM_grad (with some flow noise)
-        selected_popsize = int(batch_size * self.selected_popsize)
+        is_random = jrandom.uniform(subkey, shape=()) < self.random_proba
 
         key, subkey = jrandom.split(key)
-        IM_vals, IM_grads = self.IM_fn(subkey, target_goal_embedding_library, reached_goal_embedding_library, batch_size)
-        log.add_value('IM_vals', IM_vals)
-        log.add_value('IM_grads', IM_grads)
-
-        selected_pop_ids = jnp.argsort(IM_vals)[-selected_popsize:]
-        n_repeats = (batch_size - random_popsize) // selected_popsize
-        n_add = (batch_size - random_popsize) - n_repeats * selected_popsize
-        flowed_pop_ids = jnp.concatenate([jnp.repeat(selected_pop_ids, n_repeats), selected_pop_ids[-n_add:0]])
-        flowed_out_shape = jtu.tree_map(lambda shape: (len(flowed_pop_ids),) + shape[1:], self.out_shape,
-                                        is_leaf=lambda node: isinstance(node, tuple))
-        grad_updates = self.IM_grad_scaling * IM_grads[flowed_pop_ids]
-        grad_updates_flat, _ = jtu.tree_flatten(grad_updates)
-        grad_updates = self.out_treedef.unflatten(grad_updates_flat)
-        #grad_updates = jtu.tree_map(lambda gu, min, max: gu*(max-min), grad_updates, library_min, library_max)
-        key, subkey = jrandom.split(key)
-        noise_std = jtu.tree_map(lambda min, max: self.flow_noise*(max-min), library_min, library_max)
-        zero_mean = jtu.tree_map(lambda sig: jnp.zeros_like(sig), noise_std)
-        noise_updates = normal(subkey, zero_mean, noise_std, self.out_treedef, flowed_out_shape, self.out_dtype)
-        original_points = jtu.tree_map(lambda node: node[-batch_size:][flowed_pop_ids], reached_goal_embedding_library)
-        flowed_goals = jtu.tree_map(lambda o, gu, nu: o+gu+nu, original_points, grad_updates, noise_updates)
-
-        # concatenate
-        next_goals = jtu.tree_map(lambda random, flowed: jnp.concatenate([random, flowed], axis=0), random_next_goals, flowed_goals)
-        return next_goals
+        return lax.cond(is_random, random_sample, IM_sample, subkey)
 
 
 class BaseGCInterventionSelector(adx.Module):
@@ -209,7 +206,7 @@ class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
         reached_goals_flat = jnp.concatenate(reached_goals_flat, axis=-1)
 
         selected_intervention_ids, distances = nearest_neighbors(target_goals_flat, reached_goals_flat, k=self.k)
-        selected_intervention_ids = jrandom.choice(key, selected_intervention_ids, axis=1)
+        selected_intervention_ids = jrandom.choice(key, selected_intervention_ids, axis=-1)
 
         return selected_intervention_ids
 
@@ -253,5 +250,3 @@ class BaseRolloutStatisticsEncoder(adx.Module):
     @jit
     def __call__(self, key, system_outputs):
         raise NotImplementedError
-
-

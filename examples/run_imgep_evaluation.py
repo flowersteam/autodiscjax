@@ -1,9 +1,8 @@
-from autodiscjax import DictTree
 from autodiscjax.experiment_pipelines import run_imgep_evaluation
 import evaluation_config
 import experiment_config
-import exputils.data.logging as log
 from create_modules import *
+import time
 
 if __name__ == "__main__":
     # Load history of interventions from the experiment
@@ -30,14 +29,12 @@ if __name__ == "__main__":
 
     # Run Evaluation Pipeline
     pipeline_config = evaluation_config.get_pipeline_config()
-    ## Set Log
-    log.reset()
-    log.set_directory(pipeline_config.evaluation_logging_save_folder)
+    tstart = time.time()
     run_imgep_evaluation(pipeline_config.jax_platform_name, pipeline_config.seed,
                          pipeline_config.n_perturbations, pipeline_config.evaluation_data_save_folder,
                          experiment_system_output_library, experiment_intervention_params_library, intervention_fn,
                          perturbation_generator, perturbation_fn,
                          system_rollout, rollout_statistics_encoder,
                          out_sanity_check=True, save_modules=False)
-    ## Save Log
-    log.save()
+    tend = time.time()
+    print(tend - tstart)

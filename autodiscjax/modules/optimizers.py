@@ -1,7 +1,6 @@
 from autodiscjax import DictTree
 from autodiscjax.utils.misc import normal
 import equinox as eqx
-import exputils.data.logging as log
 from jax import jit, value_and_grad, vmap
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -62,9 +61,6 @@ class EAOptimizer(BaseOptimizer):
 
             step_end = time.time()
 
-            log.add_value('optim_step_loss', losses_flat)
-            log.add_value('optim_step_time', step_end-step_start)
-
         return params
 
 
@@ -122,8 +118,6 @@ class SGDOptimizer(BaseOptimizer):
             params = optax.apply_updates(params, updates)
 
             step_end = time.time()
-            log.add_value('optim_step_loss', loss)
-            log.add_value('optim_step_time', step_end - step_start)
 
         if is_params_dictree:
             params = DictTree(params)

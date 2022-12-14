@@ -8,8 +8,8 @@ def is_stable(x, time_window=jnp.r_[-1000:0], std_epsilon=1e-4):
     """
     x is a signal of shape ...xT
     """
-    mean_vals = x[..., time_window].mean(-1)
-    std_vals = x[..., time_window].std(-1)
+    mean_vals = jnp.nanmean(x[..., time_window], -1)
+    std_vals = jnp.nanstd(x[..., time_window], -1)
     is_stable = (std_vals < std_epsilon)
 
     return is_stable, mean_vals, std_vals
