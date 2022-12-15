@@ -98,10 +98,10 @@ class BaseIM(eqx.Module):
 
 class LearningProgressIM(BaseIM):
     @partial(jit, static_argnames=("batch_size", ))
-    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, time_window):
-        target_goals = jtu.tree_map(lambda node: node[time_window], target_goal_embedding_library)
-        reached_goals = jtu.tree_map(lambda node: node[time_window], reached_goal_embedding_library)
-        previously_reached_goals = jtu.tree_map(lambda node: node[time_window], reached_goal_embedding_library)
+    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, batch_size):
+        target_goals = jtu.tree_map(lambda node: node[-batch_size:], target_goal_embedding_library)
+        reached_goals = jtu.tree_map(lambda node: node[-batch_size:], reached_goal_embedding_library)
+        previously_reached_goals = jtu.tree_map(lambda node: node[:-batch_size], reached_goal_embedding_library)
 
         target_goals_flat, target_goals_treedef = jtu.tree_flatten(target_goals)
         target_goals_flat = jnp.concatenate(target_goals_flat, axis=-1)
@@ -121,7 +121,7 @@ class LearningProgressIM(BaseIM):
             IM_vals, IM_grads = vmap(value_and_grad(LP, 0), in_axes=(0, 0, 0))(target_goals_flat, previously_closest_goals_flat, reached_goals_flat)
 
         else:
-            IM_vals = jnp.zeros(shape=(len(time_window), ), dtype=jnp.float32)
+            IM_vals = jnp.zeros(shape=(batch_size, ), dtype=jnp.float32)
             IM_grads = jrandom.uniform(key, shape=reached_goals_flat.shape, dtype=reached_goals_flat.dtype)
 
         return IM_vals, IM_grads
@@ -176,8 +176,8 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
             return flowed_goal
 
         key, subkey = jrandom.split(key)
-        IM_vals, IM_grads = self.IM_fn(subkey, target_goal_embedding_library, reached_goal_embedding_library, self.time_window)
-        log_data = adx.DictTree(IM_vals=IM_vals, IM_grads=IM_grads)
+        IM_vals, IM_grads = self.IM_fn(subkey, target_goal_embedding_library, reached_goal_embedding_library, len(self.time_window))
+        log_data = adx.DictTree(IM_vals=IM_vals)
 
         key, subkey = jrandom.split(key)
         is_random = jrandom.uniform(subkey, shape=()) < self.random_proba
