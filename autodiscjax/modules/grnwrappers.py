@@ -40,7 +40,7 @@ class NoisePerturbationGenerator(adx.Module):
             yranges = (system_outputs_library.ys[..., y_idx, :].max(-1) - system_outputs_library.ys[..., y_idx, :].min(-1))[..., jnp.newaxis] #shape(batch_size, 1)
             std.y[y_idx] = std.y[y_idx] * yranges
 
-        return self.normal_fn(key, std=std)
+        return self.normal_fn(key, std=std), None
 
 class WallPerturbationGenerator(adx.Module):
     """
@@ -75,7 +75,7 @@ class WallPerturbationGenerator(adx.Module):
                                                   walls_other_centers + walls_length / 2.], axis=-1).reshape(out_shape) * \
                                        jnp.ones(out_shape)
 
-        return out_params
+        return out_params, None
 
 class NullIntervention(eqx.Module):
     @jit
@@ -266,7 +266,7 @@ class GRNRollout(BaseSystemRollout):
         outputs.cs = cs
         outputs.ts = ts
 
-        return outputs
+        return outputs, None
 
 class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
     filter_fn: Callable
@@ -311,4 +311,4 @@ class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
         return stats 
 
     def __call__(self, key, system_outputs):
-        return filter_update(system_outputs, self.filter_fn, self.update_fn, self.out_treedef)
+        return filter_update(system_outputs, self.filter_fn, self.update_fn, self.out_treedef), None

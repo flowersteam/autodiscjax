@@ -163,7 +163,10 @@ def create_gc_intervention_selector_module(gc_intervention_selector_config):
 
 def create_gc_intervention_optimizer_module(random_intervention_generator, gc_intervention_optimizer_config):
     if gc_intervention_optimizer_config.optimizer_type == "SGD":
-        optimizer = optimizers.SGDOptimizer(random_intervention_generator.low,
+        optimizer = optimizers.SGDOptimizer(random_intervention_generator.out_treedef,
+                                            random_intervention_generator.out_shape,
+                                            random_intervention_generator.out_dtype,
+                                            random_intervention_generator.low,
                                             random_intervention_generator.high,
                                             gc_intervention_optimizer_config.n_optim_steps,
                                             jtu.tree_map(
@@ -172,7 +175,10 @@ def create_gc_intervention_optimizer_module(random_intervention_generator, gc_in
                                                 random_intervention_generator.high))
 
     elif gc_intervention_optimizer_config.optimizer_type == "OpenES":
-        optimizer = optimizers.OpenESOptimizer(random_intervention_generator.low,
+        optimizer = optimizers.OpenESOptimizer(random_intervention_generator.out_treedef,
+                                               random_intervention_generator.out_shape,
+                                               random_intervention_generator.out_dtype,
+                                               random_intervention_generator.low,
                                                random_intervention_generator.high,
                                                gc_intervention_optimizer_config.n_optim_steps,
                                                jtu.tree_map(
@@ -187,7 +193,10 @@ def create_gc_intervention_optimizer_module(random_intervention_generator, gc_in
                                                )
 
     elif gc_intervention_optimizer_config.optimizer_type == "EA":
-        optimizer = optimizers.EAOptimizer(random_intervention_generator.low,
+        optimizer = optimizers.EAOptimizer(random_intervention_generator.out_treedef,
+                                           random_intervention_generator.out_shape,
+                                           random_intervention_generator.out_dtype,
+                                           random_intervention_generator.low,
                                            random_intervention_generator.high,
                                            gc_intervention_optimizer_config.n_optim_steps,
                                            gc_intervention_optimizer_config.n_workers,
@@ -201,9 +210,6 @@ def create_gc_intervention_optimizer_module(random_intervention_generator, gc_in
     else:
         raise ValueError
 
-    gc_intervention_optimizer = imgep.BaseGCInterventionOptimizer(random_intervention_generator.out_treedef,
-                                                                  random_intervention_generator.out_shape,
-                                                                  random_intervention_generator.out_dtype,
-                                                                  optimizer)
+    gc_intervention_optimizer = imgep.BaseGCInterventionOptimizer(optimizer)
 
     return gc_intervention_optimizer

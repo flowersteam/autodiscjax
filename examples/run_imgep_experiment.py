@@ -1,5 +1,6 @@
 from autodiscjax.experiment_pipelines import run_imgep_experiment
 import experiment_config
+import exputils.data.logging as log
 from create_modules import *
 import time
 
@@ -37,6 +38,8 @@ if __name__ == "__main__":
     pipeline_config = experiment_config.get_pipeline_config()
 
     ## Run
+    log.clear()
+    log.set_directory(pipeline_config.experiment_logging_save_folder)
     tstart = time.time()
     run_imgep_experiment(pipeline_config.jax_platform_name, pipeline_config.seed,
                          pipeline_config.n_random_batches, pipeline_config.n_imgep_batches, pipeline_config.batch_size,
@@ -49,3 +52,5 @@ if __name__ == "__main__":
                          out_sanity_check=False, save_modules=False)
     tend = time.time()
     print(tend-tstart)
+    log.add_value("experiment_time", tend-tstart)
+    log.save()

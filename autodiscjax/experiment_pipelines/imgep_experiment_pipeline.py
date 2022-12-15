@@ -1,5 +1,6 @@
 import autodiscjax as adx
 import equinox as eqx
+import exputils.data.logging as log
 from autodiscjax.utils.accessors import merge_concatenate
 import jax
 from jax import vmap
@@ -8,6 +9,14 @@ import jax.random as jrandom
 import jax.tree_util as jtu
 import os
 
+def append_to_log(log_data):
+    if log_data is None:
+        return
+    elif isinstance(log_data, adx.DictTree):
+        for k, v in log_data.items():
+            log.add_value(k, v)
+    else:
+        raise NotImplementedError
 
 def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: int, n_imgep_batches: int,
                          batch_size: int, save_folder: str,
@@ -83,7 +92,8 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
             print("Generate random intervention")
             # generate random intervention
             key, *subkeys = jrandom.split(key, num=batch_size + 1)
-            interventions_params = batched_random_intervention_generator(jnp.array(subkeys))
+            interventions_params, log_data = batched_random_intervention_generator(jnp.array(subkeys))
+            append_to_log(log_data)
             if out_sanity_check:
                 vmap(random_intervention_generator.out_sanity_check)(interventions_params)
 
@@ -100,16 +110,17 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
             # sample goal
             print("Generate target goals")
             key, *subkeys = jrandom.split(key, num=batch_size + 1)
-            target_goals_embeddings = batched_goal_generator(jnp.array(subkeys), history.target_goal_embedding_library,
+            target_goals_embeddings, log_data = batched_goal_generator(jnp.array(subkeys), history.target_goal_embedding_library,
                                                              history.reached_goal_embedding_library,
                                                              history.system_rollout_statistics_library)
+            append_to_log(log_data)
             if out_sanity_check:
                 vmap(goal_generator.out_sanity_check)(target_goals_embeddings)
 
             # goal-conditioned selection of source intervention from history
             print("Select closes intervention")
             key, *subkeys = jrandom.split(key, num=batch_size + 1)
-            source_interventions_ids = batched_gc_intervention_selector(jnp.array(subkeys), target_goals_embeddings,
+            source_interventions_ids, log_data = batched_gc_intervention_selector(jnp.array(subkeys), target_goals_embeddings,
                                                                         history.reached_goal_embedding_library,
                                                                         history.system_rollout_statistics_library)
             if out_sanity_check:
@@ -120,39 +131,43 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
             # goal-conditioned optimization of source intervention
             print("Optimize the selected intervention")
             key, *subkeys = jrandom.split(key, num=batch_size + 1)
-            interventions_params = batched_gc_intervention_optimizer(jnp.array(subkeys), intervention_fn,
+            interventions_params, log_data = batched_gc_intervention_optimizer(jnp.array(subkeys), intervention_fn,
                                                                      interventions_params, system_rollout,
                                                                      goal_embedding_encoder, goal_achievement_loss,
                                                                      target_goals_embeddings)
+            append_to_log(log_data)
             if out_sanity_check:
                 vmap(gc_intervention_optimizer.out_sanity_check)(interventions_params)
 
         # generate perturbation
         print("Generate the perturbation")
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
-        perturbations_params = batched_perturbation_generator(jnp.array(subkeys))
+        perturbations_params, log_data = batched_perturbation_generator(jnp.array(subkeys))
         if out_sanity_check:
             vmap(perturbation_generator.out_sanity_check)(perturbations_params)
 
         # rollout system
         print("Rollout the system")
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
-        system_outputs = batched_system_rollout(jnp.array(subkeys), intervention_fn, interventions_params,
+        system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), intervention_fn, interventions_params,
                                                 perturbation_fn, perturbations_params)
+        append_to_log(log_data)
         if out_sanity_check:
             vmap(system_rollout.out_sanity_check)(system_outputs)
 
         # represent outputs -> goals
         print("Encode the goal")
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
-        reached_goals_embeddings = batched_goal_embedding_encoder(jnp.array(subkeys), system_outputs)
+        reached_goals_embeddings, log_data = batched_goal_embedding_encoder(jnp.array(subkeys), system_outputs)
+        append_to_log(log_data)
         if out_sanity_check:
             vmap(goal_embedding_encoder.out_sanity_check)(reached_goals_embeddings)
 
         # represent outputs -> other statistics
         print("Encode the rollout statistics")
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
-        system_rollouts_statistics = batched_rollout_statistics_encoder(jnp.array(subkeys), system_outputs)
+        system_rollouts_statistics, log_data = batched_rollout_statistics_encoder(jnp.array(subkeys), system_outputs)
+        append_to_log(log_data)
         if out_sanity_check:
             vmap(rollout_statistics_encoder.out_sanity_check)(system_rollouts_statistics)
 

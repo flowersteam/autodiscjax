@@ -27,7 +27,7 @@ class EmptyArrayGenerator(adx.Module):
     @jit
     def __call__(self, key):
         return jtu.tree_map(lambda shape, dtype: jnp.empty(shape=shape, dtype=dtype), self.out_shape, self.out_dtype,
-                            is_leaf=lambda node: isinstance(node, tuple))
+                            is_leaf=lambda node: isinstance(node, tuple)), None
 
 class UniformRandomGenerator(BaseGenerator):
     uniform_fn: Callable
@@ -37,7 +37,7 @@ class UniformRandomGenerator(BaseGenerator):
         self.uniform_fn = jit(jtu.Partial(uniform, low=low, high=high, out_treedef=self.out_treedef, out_shape=self.out_shape, out_dtype=self.out_dtype))
 
     def __call__(self, key):
-        return self.uniform_fn(key)
+        return self.uniform_fn(key), None
 
 class NormalRandomGenerator(BaseGenerator):
     normal_fn: Callable
@@ -47,7 +47,7 @@ class NormalRandomGenerator(BaseGenerator):
         self.normal_fn = jit(jtu.Partial(normal, mean=mean, std=std, out_treedef=self.out_treedef, out_shape=self.out_shape, out_dtype=self.out_dtype))
 
     def __call__(self, key):
-        return self.normal_fn(key)
+        return self.normal_fn(key), None
 
 
 class BaseGoalEmbeddingEncoder(adx.Module):
@@ -65,7 +65,7 @@ class FilterGoalEmbeddingEncoder(BaseGoalEmbeddingEncoder):
 
     @jit
     def __call__(self, key, system_outputs):
-        return filter(system_outputs, self.filter_fn, self.out_treedef)
+        return filter(system_outputs, self.filter_fn, self.out_treedef), None
 
 
 class BaseGoalGenerator(adx.Module):
@@ -89,7 +89,7 @@ class HypercubeGoalGenerator(BaseGoalGenerator):
         low = jtu.tree_map(lambda center, size: center-size/2.0, hypercube_center, hypercube_size)
         high = jtu.tree_map(lambda center, size: center+size/2.0, hypercube_center, hypercube_size)
 
-        return uniform(key, low, high, self.out_treedef, self.out_shape, self.out_dtype)
+        return uniform(key, low, high, self.out_treedef, self.out_shape, self.out_dtype), None
 
 class BaseIM(eqx.Module):
     @jit
@@ -154,13 +154,10 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
         library_min = jtu.tree_map(lambda x: x.min(0), reached_goal_embedding_library)
         library_max = jtu.tree_map(lambda x: x.max(0), reached_goal_embedding_library)
 
-        def random_sample(key):
+        def random_sample(key, IM_vals, IM_grads):
             return uniform(key, library_min, library_max, self.out_treedef, self.out_shape, self.out_dtype)
 
-        def IM_sample(key):
-
-            key, subkey = jrandom.split(key)
-            IM_vals, IM_grads = self.IM_fn(subkey, target_goal_embedding_library, reached_goal_embedding_library, self.time_window) #TODO: replace batch size with time window
+        def IM_sample(key, IM_vals, IM_grads):
             p = nn.softmax(self.IM_val_scaling*IM_vals/jnp.linalg.norm(library_max-library_min))
 
             key, subkey = jrandom.split(key)
@@ -179,10 +176,14 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
             return flowed_goal
 
         key, subkey = jrandom.split(key)
+        IM_vals, IM_grads = self.IM_fn(subkey, target_goal_embedding_library, reached_goal_embedding_library, self.time_window)
+        log_data = adx.DictTree(IM_vals=IM_vals, IM_grads=IM_grads)
+
+        key, subkey = jrandom.split(key)
         is_random = jrandom.uniform(subkey, shape=()) < self.random_proba
 
         key, subkey = jrandom.split(key)
-        return lax.cond(is_random, random_sample, IM_sample, subkey)
+        return lax.cond(is_random, random_sample, IM_sample, subkey, IM_vals, IM_grads), log_data
 
 
 class BaseGCInterventionSelector(adx.Module):
@@ -208,7 +209,7 @@ class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
         selected_intervention_ids, distances = nearest_neighbors(target_goals_flat, reached_goals_flat, k=self.k)
         selected_intervention_ids = jrandom.choice(key, selected_intervention_ids, axis=-1)
 
-        return selected_intervention_ids
+        return selected_intervention_ids, None
 
 class BaseGoalAchievementLoss(eqx.Module):
     @jit
@@ -223,16 +224,20 @@ class L2GoalAchievementLoss(BaseGoalAchievementLoss):
 class BaseGCInterventionOptimizer(adx.Module):
     optimizer: BaseOptimizer
 
+    def __init__(self, optimizer):
+        super().__init__(optimizer.out_treedef, optimizer.out_shape, optimizer.out_dtype)
+        self.optimizer = optimizer
+
     def __call__(self, key, intervention_fn, interventions_params, system_rollout, goal_embedding_encoder, goal_achievement_loss, target_goals_embeddings):
 
         @jit
         def loss_fn(key, params):
             key, subkey = jrandom.split(key)
-            system_outputs = system_rollout(subkey, intervention_fn, params, None, None)
+            system_outputs, log_data = system_rollout(subkey, intervention_fn, params, None, None)
 
             # represent outputs -> goals
             key, subkey = jrandom.split(key)
-            reached_goals_embeddings = goal_embedding_encoder(subkey, system_outputs)
+            reached_goals_embeddings, log_data = goal_embedding_encoder(subkey, system_outputs)
 
             return goal_achievement_loss(reached_goals_embeddings, target_goals_embeddings)
 
