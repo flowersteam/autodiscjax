@@ -36,7 +36,7 @@ class EAOptimizer(BaseOptimizer):
         loss_fn = vmap(jit(loss_fn))
 
         log_data = adx.DictTree()
-        log_data.train_loss = jnp.empty(shape=(0, self.n_workers), dtype=jnp.float32)
+        log_data.train_loss = jnp.empty(shape=(0, ), dtype=jnp.float32)
         log_data.trainstep_time = jnp.empty(shape=(0, ), dtype=jnp.float32)
 
         for optim_step_idx in range(self.n_optim_steps):
@@ -66,7 +66,7 @@ class EAOptimizer(BaseOptimizer):
             params = self.clamp(params)
 
             step_end = time.time()
-            log_data = log_data.update_node("train_loss", losses_flat[jnp.newaxis], merge_concatenate)
+            log_data = log_data.update_node("train_loss", losses_flat[best_worker_idx][jnp.newaxis], merge_concatenate)
             log_data = log_data.update_node("trainstep_time", jnp.array([step_end-step_start]), merge_concatenate)
 
         return params, log_data

@@ -75,15 +75,15 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
                                                              is_leaf=lambda node: isinstance(node, tuple))
 
     # Vmap modules
-    batched_random_intervention_generator = vmap(random_intervention_generator, in_axes=(0,), out_axes=0)
-    batched_perturbation_generator = vmap(perturbation_generator, in_axes=(0,), out_axes=0)
-    batched_system_rollout = vmap(system_rollout, in_axes=(0, None, 0, None, 0), out_axes=0)
-    batched_rollout_statistics_encoder = vmap(rollout_statistics_encoder, in_axes=(0, 0), out_axes=0)
-    batched_goal_generator = vmap(goal_generator, in_axes=(0, None, None, None), out_axes=0)
-    batched_gc_intervention_selector = vmap(gc_intervention_selector, in_axes=(0, 0, None, None), out_axes=0)
+    batched_random_intervention_generator = vmap(random_intervention_generator, in_axes=(0,), out_axes=(0, None))
+    batched_perturbation_generator = vmap(perturbation_generator, in_axes=(0,), out_axes=(0, None))
+    batched_system_rollout = vmap(system_rollout, in_axes=(0, None, 0, None, 0), out_axes=(0, None))
+    batched_rollout_statistics_encoder = vmap(rollout_statistics_encoder, in_axes=(0, 0), out_axes=(0, None))
+    batched_goal_generator = vmap(goal_generator, in_axes=(0, None, None, None), out_axes=(0, None))
+    batched_gc_intervention_selector = vmap(gc_intervention_selector, in_axes=(0, 0, None, None), out_axes=(0, None))
     batched_gc_intervention_optimizer = vmap(gc_intervention_optimizer, in_axes=(0, None, 0, None, None, None, 0),
-                                             out_axes=0)
-    batched_goal_embedding_encoder = vmap(goal_embedding_encoder, in_axes=(0, 0), out_axes=0)
+                                             out_axes=(0, 0))
+    batched_goal_embedding_encoder = vmap(goal_embedding_encoder, in_axes=(0, 0), out_axes=(0, None))
 
     # Run Exploration
     for iteration_idx in range(n_random_batches + n_imgep_batches):
