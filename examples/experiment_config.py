@@ -43,6 +43,7 @@ def get_goal_generator_config():
     # config.hypercube_scaling = 1.5
 
     config.generator_type = "IMFlow_sampling"
+    config.IM_val_scaling = 10.0
     config.IM_grad_scaling = 0.1
     config.random_proba = 0.2
     config.flow_noise = 0.1

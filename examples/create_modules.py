@@ -138,7 +138,7 @@ def create_goal_generator_module(goal_embedding_encoder, goal_generator_config):
 
     elif goal_generator_config.generator_type == "IMFlow_sampling":
         goal_generator = imgep.IMFlowGoalGenerator(goal_embedding_encoder.out_treedef, goal_embedding_encoder.out_shape, goal_embedding_encoder.out_dtype,
-                                                   imgep.LearningProgressIM(), goal_generator_config.IM_grad_scaling,
+                                                   imgep.LearningProgressIM(), goal_generator_config.IM_val_scaling, goal_generator_config.IM_grad_scaling,
                                                    goal_generator_config.random_proba, goal_generator_config.flow_noise,
                                                    goal_generator_config.time_window)
     else:
