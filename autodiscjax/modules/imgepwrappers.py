@@ -1,5 +1,5 @@
 import autodiscjax as adx
-from autodiscjax.modules.optimizers import BaseOptimizer
+from autodiscjax.modules.optimizers import ClampModule, BaseOptimizer
 from autodiscjax.utils.misc import filter, nearest_neighbors, normal, uniform
 import equinox as eqx
 from functools import partial
@@ -7,49 +7,15 @@ from jax import jit, lax, value_and_grad, vmap, nn
 import jax.tree_util as jtu
 import jax.numpy as jnp
 import jax.random as jrandom
-from jaxtyping import Array, PyTree
+from jaxtyping import Array
 from typing import Callable
 
-class BaseGenerator(adx.Module):
-    low: PyTree = None
-    high: PyTree = None
-
-    def __init__(self, out_treedef, out_shape, out_dtype, low=None, high=None):
-        super().__init__(out_treedef, out_shape, out_dtype)
-
-        if isinstance(low, float):
-            self.low = self.out_treedef.unflatten([low]*self.out_treedef.num_leaves)
-        else:
-            self.low = low
-
-        if isinstance(high, float):
-            self.high = self.out_treedef.unflatten([high]*self.out_treedef.num_leaves)
-        else:
-            self.high = high
-
+class BaseGenerator(ClampModule):
     @jit
     def __call__(self, key):
         raise NotImplementedError
 
-    @jit
-    def clamp(self, pytree, is_leaf=None):
-        return self.clamp_high(self.clamp_low(pytree, is_leaf=is_leaf), is_leaf=is_leaf)
-
-    @jit
-    def clamp_low(self, pytree, is_leaf=None):
-        if self.low is not None:
-            return jtu.tree_map(lambda val, low: jnp.maximum(val, low), pytree, self.low, is_leaf=is_leaf)
-        else:
-            return pytree
-
-    @jit
-    def clamp_high(self, pytree, is_leaf=None):
-        if self.high is not None:
-            return jtu.tree_map(lambda val, high: jnp.minimum(val, high), pytree, self.high, is_leaf=is_leaf)
-        else:
-            return pytree
-
-class EmptyArrayGenerator(adx.Module):
+class EmptyArrayGenerator(BaseGenerator):
     @jit
     def __call__(self, key):
         return jtu.tree_map(lambda shape, dtype: jnp.empty(shape=shape, dtype=dtype), self.out_shape, self.out_dtype,
