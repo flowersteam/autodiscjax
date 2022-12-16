@@ -39,8 +39,11 @@ def get_goal_embedding_encoder_config():
 def get_goal_generator_config():
     config = Dict()
 
+    config.low = 0.0
+    config.high = None
+
     # config.generator_type = "hypercube_sampling"
-    # config.hypercube_scaling = 1.5
+    # config.hypercube_scaling = 1.2
 
     config.generator_type = "IMFlow_sampling"
     config.IM_val_scaling = 10.0

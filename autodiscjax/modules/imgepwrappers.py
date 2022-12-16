@@ -14,14 +14,40 @@ class BaseGenerator(adx.Module):
     low: PyTree = None
     high: PyTree = None
 
+    def __init__(self, out_treedef, out_shape, out_dtype, low=None, high=None):
+        super().__init__(out_treedef, out_shape, out_dtype)
+
+        if isinstance(low, float):
+            self.low = self.out_treedef.unflatten([low]*self.out_treedef.num_leaves)
+        else:
+            self.low = low
+
+        if isinstance(high, float):
+            self.high = self.out_treedef.unflatten([high]*self.out_treedef.num_leaves)
+        else:
+            self.high = high
+
     @jit
     def __call__(self, key):
         raise NotImplementedError
 
     @jit
-    def clamp(self, out_pytree, is_leaf=None):
-        return jtu.tree_map(lambda val, low, high: jnp.minimum(jnp.maximum(val, low), high), out_pytree, self.low,
-                            self.high, is_leaf=is_leaf)
+    def clamp(self, pytree, is_leaf=None):
+        return self.clamp_high(self.clamp_low(pytree, is_leaf=is_leaf), is_leaf=is_leaf)
+
+    @jit
+    def clamp_low(self, pytree, is_leaf=None):
+        if self.low is not None:
+            return jtu.tree_map(lambda val, low: jnp.maximum(val, low), pytree, self.low, is_leaf=is_leaf)
+        else:
+            return pytree
+
+    @jit
+    def clamp_high(self, pytree, is_leaf=None):
+        if self.high is not None:
+            return jtu.tree_map(lambda val, high: jnp.minimum(val, high), pytree, self.high, is_leaf=is_leaf)
+        else:
+            return pytree
 
 class EmptyArrayGenerator(adx.Module):
     @jit
@@ -68,16 +94,16 @@ class FilterGoalEmbeddingEncoder(BaseGoalEmbeddingEncoder):
         return filter(system_outputs, self.filter_fn, self.out_treedef), None
 
 
-class BaseGoalGenerator(adx.Module):
+class BaseGoalGenerator(BaseGenerator):
     @jit
     def __call__(self, key, reached_goal_embedding_library, system_rollout_statistics_library=None):
         raise NotImplementedError
 
 class HypercubeGoalGenerator(BaseGoalGenerator):
-    hypercube_scaling: float = 1.5
+    hypercube_scaling: float = 1.2
 
-    def __init__(self, out_treedef, out_shape, out_dtype, hypercube_scaling=1.5):
-        super().__init__(out_treedef, out_shape, out_dtype)
+    def __init__(self, out_treedef, out_shape, out_dtype, low=None, high=None, hypercube_scaling=1.2):
+        super().__init__(out_treedef, out_shape, out_dtype, low, high)
         self.hypercube_scaling = hypercube_scaling
 
     @jit
@@ -87,8 +113,9 @@ class HypercubeGoalGenerator(BaseGoalGenerator):
         hypercube_center = jtu.tree_map(lambda min, max: (min+max/2.0), library_min, library_max)
         hypercube_size = jtu.tree_map(lambda min, max: (max-min) * self.hypercube_scaling, library_min, library_max)
         low = jtu.tree_map(lambda center, size: center-size/2.0, hypercube_center, hypercube_size)
+        low = self.clamp_low(low)
         high = jtu.tree_map(lambda center, size: center+size/2.0, hypercube_center, hypercube_size)
-
+        high = self.clamp_high(high)
         return uniform(key, low, high, self.out_treedef, self.out_shape, self.out_dtype), None
 
 class BaseIM(eqx.Module):
@@ -137,9 +164,10 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
     flow_noise: float = 0.1
     time_window: Array = jnp.r_[-100:0]
 
-    def __init__(self, out_treedef, out_shape, out_dtype, IM_fn=LearningProgressIM(), IM_val_scaling=10,
-                 IM_grad_scaling=0.4, random_proba=0.2, flow_noise=0.1, time_window=jnp.r_[-100:0]):
-        super().__init__(out_treedef, out_shape, out_dtype)
+    def __init__(self, out_treedef, out_shape, out_dtype, low=None, high=None,
+                 IM_fn=LearningProgressIM(), IM_val_scaling=10, IM_grad_scaling=0.4,
+                 random_proba=0.2, flow_noise=0.1, time_window=jnp.r_[-100:0]):
+        super().__init__(out_treedef, out_shape, out_dtype, low, high)
         self.IM_fn = IM_fn
         self.IM_val_scaling = IM_val_scaling
         self.IM_grad_scaling = IM_grad_scaling
@@ -183,7 +211,8 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
         is_random = jrandom.uniform(subkey, shape=()) < self.random_proba
 
         key, subkey = jrandom.split(key)
-        return lax.cond(is_random, random_sample, IM_sample, subkey, IM_vals, IM_grads), log_data
+        flowed_goals = lax.cond(is_random, random_sample, IM_sample, subkey, IM_vals, IM_grads)
+        return self.clamp(flowed_goals), log_data
 
 
 class BaseGCInterventionSelector(adx.Module):

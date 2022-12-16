@@ -134,10 +134,12 @@ def create_goal_embedding_encoder_module(goal_embedding_encoder_config):
 def create_goal_generator_module(goal_embedding_encoder, goal_generator_config):
     if goal_generator_config.generator_type == "hypercube_sampling":
         goal_generator = imgep.HypercubeGoalGenerator(goal_embedding_encoder.out_treedef, goal_embedding_encoder.out_shape, goal_embedding_encoder.out_dtype,
+                                                      goal_generator_config.low, goal_generator_config.high,
                                                       goal_generator_config.hypercube_scaling)
 
     elif goal_generator_config.generator_type == "IMFlow_sampling":
         goal_generator = imgep.IMFlowGoalGenerator(goal_embedding_encoder.out_treedef, goal_embedding_encoder.out_shape, goal_embedding_encoder.out_dtype,
+                                                   goal_generator_config.low, goal_generator_config.high,
                                                    imgep.LearningProgressIM(), goal_generator_config.IM_val_scaling, goal_generator_config.IM_grad_scaling,
                                                    goal_generator_config.random_proba, goal_generator_config.flow_noise,
                                                    goal_generator_config.time_window)
