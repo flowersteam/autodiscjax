@@ -19,7 +19,7 @@ def test_im_flow_goal_generator():
     flow_noise = 0.
     time_window = jnp.r_[-batch_size:0]
 
-    imflow_generator = IMFlowGoalGenerator(goal_embedding_treedef, goal_embedding_shape, goal_embedding_dtype,
+    imflow_generator = IMFlowGoalGenerator(goal_embedding_treedef, goal_embedding_shape, goal_embedding_dtype, None, None,
                                            IM_fn, IM_val_scaling, IM_grad_scaling, random_proba, flow_noise, time_window)
     imflow_generator = vmap(imflow_generator, in_axes=(0, None, None, None), out_axes=0)
 
@@ -41,7 +41,7 @@ def test_im_flow_goal_generator():
                                                      jrandom.uniform(subkeys[4], shape=(batch_size // 2, gs_ndim),
                                                                      minval=jnp.array([.2, .5]), maxval=jnp.array([.4, .75]))])
     key, *subkeys = jrandom.split(key, num=batch_size + 1)
-    next_goals = imflow_generator(jnp.array(subkeys), target_goal_embedding_library, reached_goal_embedding_library, None)
+    next_goals, log_data = imflow_generator(jnp.array(subkeys), target_goal_embedding_library, reached_goal_embedding_library, None)
 
     # Assert that all next goals are on the upper-right side of the grid
     assert next_goals.shape == (batch_size, gs_ndim)

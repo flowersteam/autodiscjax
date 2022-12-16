@@ -34,7 +34,7 @@ def test_wall_intervention():
 
     # Default Rollout
     key, subkey = jrandom.split(key)
-    default_system_outputs = system_rollout(subkey)
+    default_system_outputs, log_data = system_rollout(subkey)
     ys = default_system_outputs.ys
 
 
@@ -57,7 +57,7 @@ def test_wall_intervention():
 
     # Rollout with wall
     key, subkey = jrandom.split(key)
-    wall_system_outputs = system_rollout(subkey, intervention_fn, intervention_params)
+    wall_system_outputs, log_data = system_rollout(subkey, intervention_fn, intervention_params)
 
     # Show results
     plt.figure()
@@ -93,7 +93,7 @@ def test_wall_intervention_batch_mode():
 
     # Default Rollout
     key, subkey = jrandom.split(key)
-    default_system_outputs = system_rollout(subkey)
+    default_system_outputs, log_data = system_rollout(subkey)
     ys = default_system_outputs.ys
 
     # Prepare Wall Intervention
@@ -120,7 +120,7 @@ def test_wall_intervention_batch_mode():
 
     # Rollout with wall
     key, subkey = jrandom.split(key)
-    wall_system_outputs = system_rollout(subkey, intervention_fn, intervention_params)
+    wall_system_outputs, log_data = system_rollout(subkey, intervention_fn, intervention_params)
 
     # Show results
     for batch_idx in range(batch_size):

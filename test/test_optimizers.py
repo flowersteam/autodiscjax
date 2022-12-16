@@ -69,20 +69,20 @@ def test_sgd_optimizer():
         loss_fn = jtu.Partial(L2loss, g=target)
 
         ea_optimizer = EAOptimizer(jtu.tree_structure(params), params.shape, params.dtype, None, None,
-                                   n_optim_steps=10, n_workers=100, noise_std=jtu.tree_map(lambda p: 1.0, params))
+                                   n_optim_steps=50, n_workers=100, noise_std=jtu.tree_map(lambda p: 0.1, params))
         ea_start = time.time()
         ea_optimized_params, log_data = ea_optimizer(key, params, loss_fn)
         ea_end = time.time()
 
         sgd_optimizer = SGDOptimizer(jtu.tree_structure(params), params.shape, params.dtype, None, None,
-                                     n_optim_steps=10, lr=jtu.tree_map(lambda p: 1.0, params))
+                                     n_optim_steps=50, lr=jtu.tree_map(lambda p: 0.1, params))
         sgd_start = time.time()
         sgd_optimized_params, log_data = sgd_optimizer(key, params, loss_fn)
         sgd_end = time.time()
 
 
         openes_optimizer = OpenESOptimizer(jtu.tree_structure(params), params.shape, params.dtype, None, None,
-                                           n_optim_steps=10, lr=jtu.tree_map(lambda p: 1.0, params), n_workers=100, noise_std=jtu.tree_map(lambda p: 1.0, params))
+                                           n_optim_steps=50, lr=jtu.tree_map(lambda p: 0.1, params), n_workers=100, noise_std=jtu.tree_map(lambda p: 0.1, params))
         openes_start = time.time()
         openes_optimized_params, log_data = openes_optimizer(key, params, loss_fn)
         openes_end = time.time()
