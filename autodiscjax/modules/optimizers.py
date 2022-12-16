@@ -68,43 +68,53 @@ class EAOptimizer(BaseOptimizer):
         self.noise_std = noise_std
         self.schedule_fn = jtu.Partial(optax.polynomial_schedule(init_value=1., end_value=0., power=1, transition_steps=n_optim_steps))
 
+    def value_and_update(self, key, params, loss_fn, optim_step_idx):
+
+        # random mutations
+        zero_mean = jtu.tree_map(lambda p: jnp.zeros_like(p), params)
+        out_treedef = jtu.tree_structure(params)
+        out_shape = jtu.tree_map(lambda p: (self.n_workers,) + p.shape, params)
+        out_dtype = jtu.tree_map(lambda p: p.dtype, params)
+        key, subkey = jrandom.split(key)
+        batched_params = jtu.tree_map(lambda p: jnp.repeat(p[jnp.newaxis], self.n_workers, axis=0), params)
+        noise_std = jtu.tree_map(lambda e: self.schedule_fn(optim_step_idx) * e, self.noise_std)
+        noise = normal(key, zero_mean, noise_std, out_treedef, out_shape, out_dtype)
+        worker_params = jtu.tree_map(lambda p, e: p + e, batched_params, noise)
+
+        # evaluate fitness
+        subkeys = jrandom.split(key, 1 + self.n_workers)
+        key, subkeys = subkeys[0], subkeys[1:]
+        losses = vmap(loss_fn)(subkeys, worker_params)
+        losses_flat, _ = jtu.tree_flatten(losses)
+        losses_flat = jnp.concatenate(losses_flat)  # shape (n_workers, )
+
+        # Select best worker
+        best_worker_idx = losses_flat.argmin()
+        params = jtu.tree_map(lambda p: p[best_worker_idx], worker_params)
+
+        return losses_flat.min(), params
 
     def __call__(self, key, params, loss_fn):
-        loss_fn = vmap(jit(loss_fn))
+
 
         log_data = adx.DictTree()
         log_data.train_loss = jnp.empty(shape=(0, ), dtype=jnp.float32)
         log_data.trainstep_time = jnp.empty(shape=(0, ), dtype=jnp.float32)
 
+        value_and_update = jit(jtu.Partial(self.value_and_update, loss_fn=jtu.Partial(jit(loss_fn))))
+
         for optim_step_idx in range(self.n_optim_steps):
             step_start = time.time()
-            # random mutations
-            zero_mean = jtu.tree_map(lambda p: jnp.zeros_like(p), params)
-            out_treedef = jtu.tree_structure(params)
-            out_shape = jtu.tree_map(lambda p: (self.n_workers,) + p.shape, params)
-            out_dtype = jtu.tree_map(lambda p: p.dtype, params)
+
+            # get updates
             key, subkey = jrandom.split(key)
-            batched_params = jtu.tree_map(lambda p: jnp.repeat(p[jnp.newaxis], self.n_workers, axis=0), params)
-            noise_std = jtu.tree_map(lambda e: self.schedule_fn(optim_step_idx)*e, self.noise_std)
-            noise = normal(key, zero_mean, noise_std, out_treedef, out_shape, out_dtype)
-            worker_params = jtu.tree_map(lambda p, e: p + e, batched_params, noise)
-
-            # evaluate fitness
-            subkeys = jrandom.split(key, 1 + self.n_workers)
-            key, subkeys = subkeys[0], subkeys[1:]
-            losses = loss_fn(subkeys, worker_params)
-            losses_flat, _ = jtu.tree_flatten(losses)
-            losses_flat = jnp.concatenate(losses_flat) #shape (n_workers, )
-
-            # Select best worker
-            best_worker_idx = losses_flat.argmin()
-            params = jtu.tree_map(lambda p: p[best_worker_idx], worker_params)
+            loss, params = value_and_update(subkey, params, optim_step_idx=optim_step_idx)
 
             # Clamp params
             params = self.clamp(params)
 
             step_end = time.time()
-            log_data = log_data.update_node("train_loss", losses_flat[best_worker_idx][jnp.newaxis], merge_concatenate)
+            log_data = log_data.update_node("train_loss", loss[jnp.newaxis], merge_concatenate)
             log_data = log_data.update_node("trainstep_time", jnp.array([step_end-step_start]), merge_concatenate)
 
         return params, log_data
@@ -128,10 +138,14 @@ class SGDOptimizer(BaseOptimizer):
             param_labels = param_labels.to_dict()
         self.optimizer = optax.multi_transform(transforms, param_labels)
 
-    #@eqx.filter_jit  => much longer
     def value_and_grad(self, key, params, loss_fn):
         return value_and_grad(loss_fn, argnums=1)(key, params)
 
+    @eqx.filter_jit
+    def update(self, params, grads, opt_state):
+        updates, opt_state = self.optimizer.update(grads, opt_state)
+        params = optax.apply_updates(params, updates)
+        return params, opt_state
 
     def __call__(self, key, params, loss_fn):
         # TODO:
@@ -150,6 +164,8 @@ class SGDOptimizer(BaseOptimizer):
         log_data.train_loss = jnp.empty(shape=(0, ), dtype=jnp.float32)
         log_data.trainstep_time = jnp.empty(shape=(0, ), dtype=jnp.float32)
 
+        value_and_grad = jit(jtu.Partial(self.value_and_grad, loss_fn=jtu.Partial(jit(loss_fn))))
+
         for optim_step_idx in range(self.n_optim_steps):
             step_start = time.time()
 
@@ -158,13 +174,14 @@ class SGDOptimizer(BaseOptimizer):
                 params = adx.DictTree(params)
                 # Clamp params
                 params = self.clamp(params)
-            loss, grads = self.value_and_grad(subkey, params, jit(loss_fn))
+
+            loss, grads = value_and_grad(subkey, params)
 
             if is_params_dictree:
                 params = params.to_dict()
                 grads = grads.to_dict()
-            updates, opt_state = self.optimizer.update(grads, opt_state)
-            params = optax.apply_updates(params, updates)
+
+            params, opt_state = self.update(params, grads, opt_state)
 
             step_end = time.time()
             log_data = log_data.update_node("train_loss", loss[jnp.newaxis], merge_concatenate)
@@ -194,7 +211,6 @@ class OpenESOptimizer(SGDOptimizer):
         self.n_workers = n_workers
         self.noise_std = noise_std
 
-    #@eqx.filter_jit => much longer
     def value_and_grad(self, key, params, loss_fn):
         zero_mean = jtu.tree_map(lambda p: jnp.zeros_like(p), params)
         out_treedef = jtu.tree_structure(params)
