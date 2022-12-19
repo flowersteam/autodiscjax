@@ -47,33 +47,52 @@ class WallPerturbationGenerator(adx.Module):
     out_treedef: out_params.y[idx] = Array for idx in [node1, node2] where wall is defined
     out_shape: Array of shape (..., n_walls, 2, len(time_intervals))
     """
-    walls_target_intersection_steps: Sequence[int]
-    walls_length: Array
+    walls_target_intersection_window: Array
+    walls_length_range: Array
+    walls_sigma: Array
 
-    def __init__(self, out_treedef, out_shape, out_dtype, walls_target_intersection_steps, walls_length):
+    def __init__(self, out_treedef, out_shape, out_dtype, walls_target_intersection_window, walls_length_range, walls_sigma):
         super().__init__(out_treedef, out_shape, out_dtype)
         assert len(self.out_shape.y.keys()) == 2  # wall is defined on two nodes
-        out_shape = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))[0][0]
-        assert out_shape[1] == len(walls_target_intersection_steps) == len(walls_length)  # n_walls
 
-        self.walls_target_intersection_steps = walls_target_intersection_steps
-        self.walls_length = walls_length
-
+        self.walls_target_intersection_window = walls_target_intersection_window
+        self.walls_length_range = jnp.array(walls_length_range)
+        self.walls_sigma = walls_sigma
 
     @jit
     def __call__(self, key, ys):
         out_params = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=shape, dtype=dtype), self.out_shape,
                            self.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
-        out_shape = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))[0][0]
+        out_shape = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))[0][0] #..., n_walls, 2, len(time_intervals)
+        n_walls = out_shape[-3]
 
-        target_node_idx, other_node_idx = out_params.y.keys()
-        walls_target_centers = ys[..., target_node_idx, self.walls_target_intersection_steps]
-        walls_other_centers = ys[..., other_node_idx, self.walls_target_intersection_steps]
-        walls_length = self.walls_length * (ys[..., other_node_idx, :].max(-1) - ys[..., other_node_idx, :].min(-1))[..., jnp.newaxis]
-        out_params.y[target_node_idx] = jnp.repeat(walls_target_centers[..., jnp.newaxis, jnp.newaxis], 2, -2)
-        out_params.y[other_node_idx] = jnp.stack([walls_other_centers - walls_length / 2.,
-                                                  walls_other_centers + walls_length / 2.], axis=-1).reshape(out_shape) * \
-                                       jnp.ones(out_shape)
+        # sample random wall orientation (50% chance vertical, 50% chance horizontal)
+        node_ids = jnp.array(list(out_params.y.keys()))
+        key, subkey = jrandom.split(key)
+        target_node_rel_ids = jrandom.choice(subkey, jnp.arange(2), shape=(n_walls, ))
+        target_node_ids = node_ids[target_node_rel_ids]
+        other_node_ids = node_ids[1-target_node_rel_ids]
+
+        # sample random wall length
+        key, subkey = jrandom.split(key)
+        walls_length = jrandom.uniform(subkey, shape=(n_walls, ), minval=self.walls_length_range[0], maxval=self.walls_length_range[1])
+
+        # sample random wall position
+        key, subkey = jrandom.split(key)
+        walls_target_intersection_step = jrandom.choice(subkey, self.walls_target_intersection_window, shape=(n_walls, ))
+
+        walls_target_centers = ys[..., target_node_ids, walls_target_intersection_step]
+        walls_other_centers = ys[..., other_node_ids, walls_target_intersection_step]
+        walls_length = walls_length * (ys[..., other_node_ids, :].max(-1) - ys[..., other_node_ids, :].min(-1))
+        walls_target = jnp.repeat(jnp.repeat(walls_target_centers[..., jnp.newaxis, jnp.newaxis], out_shape[-2], -2), out_shape[-1], -1) # repeat over wall dims and over time intervals
+        walls_other = jnp.stack([walls_other_centers - walls_length / 2., walls_other_centers + walls_length / 2.], axis=-1).reshape(out_shape) * jnp.ones(out_shape)
+        for k, v in out_params.y.items():
+            out_params.y[k] = jnp.where((target_node_ids == k)[..., jnp.newaxis, jnp.newaxis], walls_target, walls_other)
+
+        sigma = self.walls_sigma * jnp.stack([ys[..., target_node_ids, :].max(-1) - ys[..., target_node_ids, :].min(-1),
+                                                         ys[..., other_node_ids, :].max(-1) - ys[..., other_node_ids, :].min(-1)],
+                                                         axis=-1)
+        out_params.sigma = jnp.repeat(sigma[..., jnp.newaxis], out_shape[-1], -1) #repeat over time intervals
 
         return out_params, None
 
@@ -158,6 +177,7 @@ class PiecewiseWallCollisionIntervention(PiecewiseIntervention):
         The walls are described by
           - a start point w_: intervention_params.y[*][:, wall_idx, 0, interval_idx]
           - a end point w: intervention_params.y[*][:, wall_idx, 1, interval_idx]
+          - [for force field collision] a sigma value: intervention_params.sigma[*][:, wall_idx, *, interval_idx] where sigma[0] is sigma_perp and sigma[1] is sigma_parallel
         The grn trajectory is described by its start point: y_[*] and its end point: y[*]
         If there is an intersection between the grn trajectory and the wall, we replace y by the intersection point.
         If they are several walls, the closest intersection point is selected.
@@ -166,7 +186,7 @@ class PiecewiseWallCollisionIntervention(PiecewiseIntervention):
         wall_dim = len(intervention_params.y.keys())
         if wall_dim != 2:
             raise NotImplementedError
-        wall_params_shape = jtu.tree_leaves(intervention_params)[0].shape #..., n_walls, 2, len(intervals)
+        wall_params_shape = jtu.tree_leaves(intervention_params.y)[0].shape #..., n_walls, 2, len(intervals)
         n_walls = wall_params_shape[-3]
         assert wall_params_shape[-2] == 2 #start and end point
         walls = jnp.empty(wall_params_shape[:-3]+(n_walls, 2, wall_dim))
@@ -176,7 +196,7 @@ class PiecewiseWallCollisionIntervention(PiecewiseIntervention):
             grn_traj = grn_traj.at[..., 0, rel_idx].set(y_[..., y_idx])
             grn_traj = grn_traj.at[..., 1, rel_idx].set(y[..., y_idx])
 
-        t_collisions, p_after_collisions = self.collision_fn(grn_traj[..., 0, :], grn_traj[..., 1, :], walls[..., 0, :], walls[..., 1, :])
+        t_collisions, p_after_collisions = self.collision_fn(grn_traj[..., 0, :], grn_traj[..., 1, :], walls[..., 0, :], walls[..., 1, :], sigma=intervention_params.sigma[..., interval_idx])
         closest_intersection_idx = jnp.nanargmin(t_collisions, axis=-1)
         closest_intersection_idx = closest_intersection_idx.reshape(closest_intersection_idx.shape + (1, 1))
         new_y = jnp.take_along_axis(p_after_collisions, closest_intersection_idx, axis=-2).squeeze()

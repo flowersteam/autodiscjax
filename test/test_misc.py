@@ -47,7 +47,7 @@ def test_wall_force_field_collision():
     A, B, C, D = jnp.array([0., 0.]), jnp.array([1., 1.]), jnp.array([0., 0.]), jnp.array([1., 1.])
     for _ in range(100):
         key, subkey = jrandom.split(key)
-        sigma = 5*jrandom.uniform(subkey)
+        sigma = 5*jrandom.uniform(subkey, shape=(2, ))
         d, p = wall_force_field_collision(A, B, C, D, sigma=sigma)
         d2, p2 = wall_force_field_collision(A, B, D, C, sigma=sigma)
         assert (d - d2) < 1e-3 and ((p - p2) ** 2).sum() < 1e-3
@@ -63,7 +63,7 @@ def test_visualize_wall_collision(variant="force_field"):
     dt = 0.2
     n = 50
     L = 10
-    sigma = L / 10
+    sigma = jnp.array([L/10, L/40])
     w = 1 / 3
     n_steps = 800
 

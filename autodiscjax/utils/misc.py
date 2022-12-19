@@ -88,7 +88,7 @@ def calc_segment_intersection(seg1_start, seg1_end, seg2_start, seg2_end):
     return p, t1, t2
 
 @jit
-def wall_sticky_collision(traj_start, traj_end, wall_start, wall_end):
+def wall_sticky_collision(traj_start, traj_end, wall_start, wall_end, **kwargs):
     """
     Returns the new trajectory endpoint when the trajectory is colliding with a "sticky" wall.
 
@@ -110,7 +110,7 @@ def wall_sticky_collision(traj_start, traj_end, wall_start, wall_end):
 
 
 @jit
-def wall_elastic_collision(traj_start, traj_end, wall_start, wall_end):
+def wall_elastic_collision(traj_start, traj_end, wall_start, wall_end, **kwargs):
     """
     Returns the new trajectory endpoint if the trajectory is colliding with a wall (assuming elastic collision).
 
@@ -142,7 +142,7 @@ def wall_elastic_collision(traj_start, traj_end, wall_start, wall_end):
 
 
 @jit
-def calc_perpendicular_wall_distance(p, wall_start, wall_end):
+def calc_perpendicular_wall_distance(p, wall_start, wall_end, sigma):
     """
     Returns
     ---------
@@ -160,10 +160,10 @@ def calc_perpendicular_wall_distance(p, wall_start, wall_end):
     n_sign = lax.cond(n_sign == 0, lambda: jnp.array(1.0), lambda: n_sign)
     n = n_sign * wall_perp / jnp.linalg.norm(wall_perp)
 
-    return d, n
+    return d, n, sigma[0]
 
 @jit
-def calc_radial_wall_distance(p, wall_start, wall_end):
+def calc_radial_wall_distance(p, wall_start, wall_end, sigma):
     """
     Returns
     ---------
@@ -178,10 +178,16 @@ def calc_radial_wall_distance(p, wall_start, wall_end):
     closest_extremity = lax.switch(closest_extremity_idx, [lambda: wall_start, lambda: wall_end])
     other_extremity = lax.switch(closest_extremity_idx, [lambda: wall_end, lambda: wall_start])
     n = lax.cond(d == 0, lambda: (p-other_extremity)/jnp.linalg.norm(p-other_extremity), lambda: (p - closest_extremity) / d)
-    return d, n
+
+
+    # wall_dir = (wall_end-wall_start)/jnp.linalg.norm(wall_end-wall_start)
+    # l = jnp.abs(jnp.dot(n, wall_dir))
+    # sigma = l * sigma[1] + (1-l) * sigma[0]
+
+    return d, n, sigma[1]
 
 @jit
-def wall_force_field_collision(traj_start, traj_end, wall_start, wall_end, sigma=0.5):
+def wall_force_field_collision(traj_start, traj_end, wall_start, wall_end, sigma=jnp.array([0.5, 0.1])):
     """
     Returns the new trajectory endpoint if the trajectory is colliding with a wall that emits a repulsing force field.
 
@@ -199,14 +205,15 @@ def wall_force_field_collision(traj_start, traj_end, wall_start, wall_end, sigma
     is_traj_start_above_wall_start = jnp.sign(jnp.dot(wall_end-wall_start, traj_start-wall_start)) >= 0
     is_traj_start_below_wall_end = jnp.sign(jnp.dot(wall_start - wall_end, traj_start - wall_end)) >= 0
 
-    d_start, wall_normal = lax.cond(is_traj_start_above_wall_start & is_traj_start_below_wall_end,
+    d_start, wall_normal, sigma = lax.cond(is_traj_start_above_wall_start & is_traj_start_below_wall_end,
                                     calc_perpendicular_wall_distance, calc_radial_wall_distance,
-                                    traj_start, wall_start, wall_end)
+                                    traj_start, wall_start, wall_end, sigma)
 
     traj_parallel = traj_end - traj_start
     wall_parallel = jnp.array([-wall_normal[1], wall_normal[0]])
+    wall_parallel /= jnp.linalg.norm(wall_parallel)
 
-    v_parallel = jnp.dot(traj_parallel, wall_parallel) * wall_parallel / jnp.linalg.norm(wall_parallel)**2
+    v_parallel = jnp.dot(traj_parallel, wall_parallel) * wall_parallel
     v_perp = jnp.dot(traj_parallel, wall_normal) * wall_normal
 
     alpha = -flat_top_gaussian(d_start, x0=0, sigma=sigma, A=2, P=1) #alpha is between (-2, 0)

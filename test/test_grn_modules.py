@@ -32,105 +32,62 @@ def test_wall_intervention():
     system_rollout = grn.GRNRollout(n_steps=100, y0=y0, w0=w0, c=c, t0=t0,
                                     deltaT=0.1, grn_step=grnstep)
 
-    # Default Rollout
-    key, subkey = jrandom.split(key)
-    default_system_outputs, log_data = system_rollout(subkey)
+    # Wall perturbation Module
+    n_walls = 3
+    perturbed_node_ids = [0, 1]
+    perturbed_intervals = [[0, 100]]
+    walls_target_intersection_window = jnp.r_[20:80]
+    walls_length_range = [0.1, 0.1]
+    walls_sigma = jnp.array([1e-2, 1e-4])
+
+    perturbation_fn = grn.PiecewiseWallCollisionIntervention(
+        time_to_interval_fn=grn.TimeToInterval(intervals=perturbed_intervals),
+        #collision_fn=jtu.Partial(vmap(wall_elastic_collision, in_axes=(None, None, 0, 0), out_axes=(0, 0))))
+        collision_fn=jtu.Partial(vmap(jtu.Partial(wall_force_field_collision), in_axes=(None, None, 0, 0), out_axes=(0, 0))))
+
+    perturbation_params_tree = DictTree()
+    for y_idx in perturbed_node_ids:
+        perturbation_params_tree.y[y_idx] = "placeholder"
+    perturbation_params_tree.sigma = "placeholder"
+
+    perturbation_params_treedef = jtu.tree_structure(perturbation_params_tree)
+
+    perturbation_params_shape = jtu.tree_map(lambda _: (n_walls, 2, len(perturbed_intervals),),
+                                             perturbation_params_tree)
+    perturbation_params_dtype = jtu.tree_map(lambda _: jnp.float32, perturbation_params_tree)
+
+    perturbation_generator = grn.WallPerturbationGenerator(perturbation_params_treedef,
+                                                           perturbation_params_shape,
+                                                           perturbation_params_dtype,
+                                                           walls_target_intersection_window,
+                                                           walls_length_range,
+                                                           walls_sigma)
+
+    # Batch modules
+    batched_perturbation_generator = vmap(perturbation_generator, in_axes=(0, 0), out_axes=0)
+    batched_system_rollout = vmap(system_rollout, in_axes=(0, None, 0, None, 0), out_axes=0)
+
+    # Rollouts with default trajectory
+    batch_size = 3
+    key, *subkeys = jrandom.split(key, num=batch_size+1)
+    default_system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), None, None, None, None)
     ys = default_system_outputs.ys
 
+    # Sample wall perturbation params
+    key, *subkeys = jrandom.split(key, num=batch_size+1)
+    perturbation_params, log_data = batched_perturbation_generator(jnp.array(subkeys), ys)
 
-    # Prepare Wall Intervention
-    wall_target_node_idx = 0
-    wall_other_node_idx = 1
-    time_intervals = [[0, 10]]
-    n_walls = 1
-    target_intersection_idx = ys.shape[-1] // 2
-    wall_target_pos = ys[wall_target_node_idx, target_intersection_idx]
-    wall_other_pos = ys[wall_other_node_idx, target_intersection_idx]
-    wall_length = 0.1*(ys[wall_other_node_idx].max() - ys[wall_other_node_idx].min())
-    intervention_params = DictTree()
-    intervention_params.y[wall_target_node_idx] = wall_target_pos * jnp.ones((n_walls, 2, len(time_intervals)))
-    intervention_params.y[wall_other_node_idx] = jnp.array([wall_other_pos-wall_length/2., wall_other_pos+wall_length/2.]).reshape((n_walls, 2, len(time_intervals))) * jnp.ones((n_walls, 2, len(time_intervals)))
-
-    collision_fn = jtu.Partial(vmap(wall_elastic_collision, in_axes=(None, None, 0, 0), out_axes=(0,0)))
-    intervention_fn = grn.PiecewiseWallCollisionIntervention(time_to_interval_fn=grn.TimeToInterval(intervals=time_intervals), collision_fn=collision_fn)
-
-
-    # Rollout with wall
-    key, subkey = jrandom.split(key)
-    wall_system_outputs, log_data = system_rollout(subkey, intervention_fn, intervention_params)
+    # Evaluation Rollout with wall perturbations
+    key, *subkeys = jrandom.split(key, num=batch_size+1)
+    wall_system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), None, None, perturbation_fn, perturbation_params)
 
     # Show results
-    plt.figure()
-    plt.plot(ys[wall_target_node_idx], ys[wall_other_node_idx])
-    plt.plot(wall_system_outputs.ys[wall_target_node_idx], wall_system_outputs.ys[wall_other_node_idx])
-    plt.plot(intervention_params.y[wall_target_node_idx].squeeze(), intervention_params.y[wall_other_node_idx].squeeze())
-    plt.show()
-
-def test_wall_intervention_batch_mode():
-    key = jrandom.PRNGKey(0)
-    batch_size = 5
-
-    # Load the system
-    biomodel_id = 341
-    biomodel_odejax_file = NamedTemporaryFile(suffix=".py")
-    biomodel_xml_body = sbmltoodejax.biomodels_api.get_content_for_model(biomodel_id)
-    model_data = sbmltoodejax.parse.ParseSBMLFile(biomodel_xml_body)
-    sbmltoodejax.modulegeneration.GenerateModel(model_data, biomodel_odejax_file.name)
-    spec = importlib.util.spec_from_file_location("ModelSpec", biomodel_odejax_file.name)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    grnstep_cls = getattr(module, "ModelStep")
-    grnstep = grnstep_cls()
-    y0 = getattr(module, "y0")
-    w0 = getattr(module, "w0")
-    c = getattr(module, "c")
-    t0 = getattr(module, "t0")
-    key, subkey = jrandom.split(key)
-    y0 = jrandom.uniform(subkey, shape=(batch_size, )+y0.shape, minval=0., maxval=300.)
-    w0 = jnp.tile(w0, (batch_size, 1))
-    system_rollout = grn.GRNRollout(n_steps=100, y0=y0, w0=w0, c=c, t0=t0,
-                                    deltaT=0.1, grn_step=grnstep)
-
-    # Default Rollout
-    key, subkey = jrandom.split(key)
-    default_system_outputs, log_data = system_rollout(subkey)
-    ys = default_system_outputs.ys
-
-    # Prepare Wall Intervention
-    wall_target_node_idx = 0
-    wall_other_node_idx = 1
-    time_intervals = [[0, 10]]
-    n_walls = 2
-    target_intersection_ids = [ys.shape[-1] // 4, 3 * ys.shape[-1] // 4]
-    wall_target_pos = ys[:, wall_target_node_idx, target_intersection_ids]
-    wall_other_pos = ys[:, wall_other_node_idx, target_intersection_ids]
-    wall_length = 0.1 * (ys[:, wall_other_node_idx].max(-1) - ys[:, wall_other_node_idx].min(-1))
-    intervention_params = DictTree()
-    intervention_params.y[wall_target_node_idx] = jnp.repeat(wall_target_pos[..., jnp.newaxis, jnp.newaxis], 2, 2)
-    intervention_params.y[wall_other_node_idx] = jnp.stack(
-        [wall_other_pos - wall_length[:, jnp.newaxis] / 2., wall_other_pos + wall_length[:, jnp.newaxis] / 2.],
-        axis=-1).reshape(
-        (batch_size, n_walls, 2, len(time_intervals))) * jnp.ones((batch_size, n_walls, 2, len(time_intervals)))
-
-    collision_fn = jtu.Partial(
-        vmap(vmap(wall_elastic_collision, in_axes=(None, None, 0, 0), out_axes=(0, 0)), in_axes=(0, 0, 0, 0),
-             out_axes=(0, 0)))
-    intervention_fn = grn.PiecewiseWallCollisionIntervention(
-        time_to_interval_fn=grn.TimeToInterval(intervals=time_intervals), collision_fn=collision_fn)
-
-    # Rollout with wall
-    key, subkey = jrandom.split(key)
-    wall_system_outputs, log_data = system_rollout(subkey, intervention_fn, intervention_params)
-
-    # Show results
-    for batch_idx in range(batch_size):
+    for sample_idx in range(batch_size):
         plt.figure()
-        plt.plot(ys[batch_idx, wall_target_node_idx], ys[batch_idx, wall_other_node_idx])
-        plt.plot(wall_system_outputs.ys[batch_idx, wall_target_node_idx],
-                 wall_system_outputs.ys[batch_idx, wall_other_node_idx])
-        plt.plot(intervention_params.y[wall_target_node_idx][batch_idx, 0].squeeze(),
-                 intervention_params.y[wall_other_node_idx][batch_idx, 0].squeeze())
-        plt.plot(intervention_params.y[wall_target_node_idx][batch_idx, 1].squeeze(),
-                 intervention_params.y[wall_other_node_idx][batch_idx, 1].squeeze())
+        plt.plot(ys[sample_idx, perturbed_node_ids[0]], ys[sample_idx, perturbed_node_ids[1]])
+        plt.plot(wall_system_outputs.ys[sample_idx, perturbed_node_ids[0]], wall_system_outputs.ys[sample_idx, perturbed_node_ids[1]])
+        for wall_idx in range(n_walls):
+            plt.plot(perturbation_params.y[perturbed_node_ids[0]][sample_idx, wall_idx].squeeze(),
+                     perturbation_params.y[perturbed_node_ids[1]][sample_idx, wall_idx].squeeze())
         plt.show()
 
