@@ -1,6 +1,7 @@
 import autodiscjax as adx
 import equinox as eqx
 from autodiscjax.utils.accessors import merge_concatenate
+from autodiscjax.utils.logging import append_to_log
 import jax
 from jax import vmap
 import jax.numpy as jnp
@@ -43,21 +44,24 @@ def run_imgep_evaluation(jax_platform_name: str, seed: int, n_perturbations: int
         # generate perturbation
         print("Generate the perturbation")
         key, *subkeys = jrandom.split(key, num=batch_size+1)
-        perturbations_params = batched_perturbation_generator(jnp.array(subkeys), experiment_system_output_library.ys)
+        perturbations_params, log_data = batched_perturbation_generator(jnp.array(subkeys), experiment_system_output_library.ys)
+        append_to_log(log_data)
         if out_sanity_check:
             vmap(perturbation_generator.out_sanity_check)(perturbations_params)
 
         # rollout system
         print("Rollout the system")
         key, *subkeys = jrandom.split(key, num=batch_size+1)
-        system_outputs = batched_system_rollout(jnp.array(subkeys), intervention_fn, experiment_intervention_params_library, perturbation_fn, perturbations_params)
+        system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), intervention_fn, experiment_intervention_params_library, perturbation_fn, perturbations_params)
+        append_to_log(log_data)
         if out_sanity_check:
             vmap(system_rollout.out_sanity_check)(system_outputs)
 
         # represent outputs -> other statistics
         print("Encode the rollout statistics")
         key, *subkeys = jrandom.split(key, num=batch_size+1)
-        system_rollouts_statistics = batched_rollout_statistics_encoder(jnp.array(subkeys), system_outputs)
+        system_rollouts_statistics, log_data = batched_rollout_statistics_encoder(jnp.array(subkeys), system_outputs)
+        append_to_log(log_data)
         if out_sanity_check:
             vmap(rollout_statistics_encoder.out_sanity_check)(system_rollouts_statistics)
 

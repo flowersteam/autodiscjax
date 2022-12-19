@@ -1,22 +1,13 @@
 import autodiscjax as adx
 import equinox as eqx
-import exputils.data.logging as log
 from autodiscjax.utils.accessors import merge_concatenate
+from autodiscjax.utils.logging import append_to_log
 import jax
 from jax import vmap
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
 import os
-
-def append_to_log(log_data):
-    if log_data is None:
-        return
-    elif isinstance(log_data, adx.DictTree):
-        for k, v in log_data.items():
-            log.add_value(k, v)
-    else:
-        raise NotImplementedError
 
 def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: int, n_imgep_batches: int,
                          batch_size: int, save_folder: str,
