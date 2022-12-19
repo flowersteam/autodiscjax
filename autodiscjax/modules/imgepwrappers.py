@@ -208,13 +208,13 @@ class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
 
 class BaseGoalAchievementLoss(eqx.Module):
     @jit
-    def __call__(self, reached_goals_embeddings, target_goals_embeddings):
+    def __call__(self, reached_goal, target_goal):
         raise NotImplementedError
 
 class L2GoalAchievementLoss(BaseGoalAchievementLoss):
     @jit
-    def __call__(self, reached_goals_embeddings, target_goals_embeddings):
-        return jnp.square(reached_goals_embeddings - target_goals_embeddings).sum()
+    def __call__(self, reached_goal, target_goal):
+        return jnp.sqrt(jnp.square(reached_goal - target_goal).sum())
 
 class BaseGCInterventionOptimizer(adx.Module):
     optimizer: BaseOptimizer
