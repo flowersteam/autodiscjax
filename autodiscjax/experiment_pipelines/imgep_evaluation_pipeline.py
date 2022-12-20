@@ -44,7 +44,7 @@ def run_imgep_evaluation(jax_platform_name: str, seed: int, n_perturbations: int
         # generate perturbation
         print("Generate the perturbation")
         key, *subkeys = jrandom.split(key, num=batch_size+1)
-        perturbations_params, log_data = batched_perturbation_generator(jnp.array(subkeys), experiment_system_output_library.ys)
+        perturbations_params, log_data = batched_perturbation_generator(jnp.array(subkeys), experiment_system_output_library)
         append_to_log(log_data)
         if out_sanity_check:
             vmap(perturbation_generator.out_sanity_check)(perturbations_params)

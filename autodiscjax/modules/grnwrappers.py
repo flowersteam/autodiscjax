@@ -57,7 +57,7 @@ class WallPerturbationGenerator(adx.Module):
 
         self.walls_target_intersection_window = walls_target_intersection_window
         self.walls_length_range = jnp.array(walls_length_range)
-        self.walls_sigma = walls_sigma
+        self.walls_sigma = jnp.array(walls_sigma)
 
     @jit
     def __call__(self, key, system_outputs_library):
