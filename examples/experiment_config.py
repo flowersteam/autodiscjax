@@ -10,7 +10,7 @@ def get_system_rollout_config():
     config.rtol = 1e-12
     config.mxstep = 50000
     config.deltaT = 0.1
-    config.n_system_steps = 500
+    config.n_system_steps = 2000
     return config
 
 def get_intervention_config():
@@ -46,7 +46,7 @@ def get_goal_generator_config():
     # config.hypercube_scaling = 1.2
 
     config.generator_type = "IMFlow_sampling"
-    config.IM_val_scaling = 10.0
+    config.IM_val_scaling = 20.0
     config.IM_grad_scaling = 0.1
     config.random_proba = 0.2
     config.flow_noise = 0.1
@@ -67,18 +67,17 @@ def get_gc_intervention_optimizer_config():
     config = Dict()
 
     config.optimizer_type = "EA"
-    config.n_optim_steps = 5
-    config.lr = 0.2
-    config.n_workers = 50
+    config.n_optim_steps = 10
+    config.n_workers = 5
     config.noise_std = 0.1
 
     # config.optimizer_type = "SGD"
-    # config.n_optim_steps = 5
-    # config.lr = 0.2
+    # config.n_optim_steps = 10
+    # config.lr = 0.1
 
     # config.optimizer_type = "OpenES"
-    # config.n_optim_steps = 5
-    # config.lr = 0.2
+    # config.n_optim_steps = 10
+    # config.lr = 0.1
     # config.n_workers = 50
     # config.noise_std = 0.1
 

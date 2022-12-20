@@ -99,8 +99,10 @@ def create_perturbation_module(perturbation_config):
         perturbation_params_tree = DictTree()
         for y_idx in perturbation_config.perturbed_node_ids:
             perturbation_params_tree.y[y_idx] = "placeholder"
+        perturbation_params_tree.sigma = "placeholder"
+
         perturbation_params_treedef = jtu.tree_structure(perturbation_params_tree)
-        n_walls = len(perturbation_config.walls_target_intersection_steps)
+        n_walls = perturbation_config.n_walls
         perturbation_params_shape = jtu.tree_map(lambda _: (n_walls, 2, len(perturbation_config.perturbed_intervals),),
                                                  perturbation_params_tree)
         perturbation_params_dtype = jtu.tree_map(lambda _: jnp.float32, perturbation_params_tree)
@@ -109,8 +111,9 @@ def create_perturbation_module(perturbation_config):
         perturbation_generator = grn.WallPerturbationGenerator(perturbation_params_treedef,
                                                                perturbation_params_shape,
                                                                perturbation_params_dtype,
-                                                               perturbation_config.walls_target_intersection_steps,
-                                                               perturbation_config.walls_length)
+                                                               perturbation_config.walls_target_intersection_window,
+                                                               perturbation_config.walls_length_range,
+                                                               perturbation_config.walls_sigma)
 
     elif perturbation_config.perturbation_type == "wall":
         raise NotImplementedError

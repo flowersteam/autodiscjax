@@ -12,11 +12,13 @@ def get_perturbation_config():
     # config.std = 0.1
 
     config.perturbation_type = "wall"
-    config.wall_type = "elastic"
-    config.perturbed_intervals = [[0, 10]]
-    config.perturbed_node_ids = [0, 1]
-    config.walls_target_intersection_steps = [100, 300]
-    config.walls_length = jnp.array([0.1, 0.1])
+    config.wall_type = "force_field"
+    config.perturbed_intervals = [[0, 100000]]
+    config.perturbed_node_ids = [2, 3]
+    config.n_walls = 2
+    config.walls_target_intersection_window = jnp.r_[200:1800]
+    config.walls_length_range = [0.2, 0.2]
+    config.walls_sigma = [1e-2, 1e-4]
     return config
 
 def get_pipeline_config():

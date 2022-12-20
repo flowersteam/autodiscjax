@@ -1,6 +1,7 @@
 from autodiscjax.experiment_pipelines import run_imgep_evaluation
 import evaluation_config
 import experiment_config
+import exputils.data.logging as log
 from create_modules import *
 import time
 
@@ -29,6 +30,8 @@ if __name__ == "__main__":
 
     # Run Evaluation Pipeline
     pipeline_config = evaluation_config.get_pipeline_config()
+    log.clear()
+    log.set_directory(pipeline_config.evaluation_logging_save_folder)
     tstart = time.time()
     run_imgep_evaluation(pipeline_config.jax_platform_name, pipeline_config.seed,
                          pipeline_config.n_perturbations, pipeline_config.evaluation_data_save_folder,
@@ -38,3 +41,5 @@ if __name__ == "__main__":
                          out_sanity_check=True, save_modules=False)
     tend = time.time()
     print(tend - tstart)
+    log.add_value("evaluation_time", tend - tstart)
+    log.save()
