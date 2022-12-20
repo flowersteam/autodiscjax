@@ -60,7 +60,7 @@ class WallPerturbationGenerator(adx.Module):
         self.walls_sigma = walls_sigma
 
     @jit
-    def __call__(self, key, ys):
+    def __call__(self, key, system_outputs_library):
         out_params = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=shape, dtype=dtype), self.out_shape,
                            self.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
         out_shape = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))[0][0] #..., n_walls, 2, len(time_intervals)
@@ -81,16 +81,16 @@ class WallPerturbationGenerator(adx.Module):
         key, subkey = jrandom.split(key)
         walls_target_intersection_step = jrandom.choice(subkey, self.walls_target_intersection_window, shape=(n_walls, ))
 
-        walls_target_centers = ys[..., target_node_ids, walls_target_intersection_step]
-        walls_other_centers = ys[..., other_node_ids, walls_target_intersection_step]
-        walls_length = walls_length * (ys[..., other_node_ids, :].max(-1) - ys[..., other_node_ids, :].min(-1))
+        walls_target_centers = system_outputs_library.ys[..., target_node_ids, walls_target_intersection_step]
+        walls_other_centers = system_outputs_library.ys[..., other_node_ids, walls_target_intersection_step]
+        walls_length = walls_length * (system_outputs_library.ys[..., other_node_ids, :].max(-1) - system_outputs_library.ys[..., other_node_ids, :].min(-1))
         walls_target = jnp.repeat(jnp.repeat(walls_target_centers[..., jnp.newaxis, jnp.newaxis], out_shape[-2], -2), out_shape[-1], -1) # repeat over wall dims and over time intervals
         walls_other = jnp.stack([walls_other_centers - walls_length / 2., walls_other_centers + walls_length / 2.], axis=-1).reshape(out_shape) * jnp.ones(out_shape)
         for k, v in out_params.y.items():
             out_params.y[k] = jnp.where((target_node_ids == k)[..., jnp.newaxis, jnp.newaxis], walls_target, walls_other)
 
-        sigma = self.walls_sigma * jnp.stack([ys[..., target_node_ids, :].max(-1) - ys[..., target_node_ids, :].min(-1),
-                                                         ys[..., other_node_ids, :].max(-1) - ys[..., other_node_ids, :].min(-1)],
+        sigma = self.walls_sigma * jnp.stack([system_outputs_library.ys[..., target_node_ids, :].max(-1) - system_outputs_library.ys[..., target_node_ids, :].min(-1),
+                                                         system_outputs_library.ys[..., other_node_ids, :].max(-1) - system_outputs_library.ys[..., other_node_ids, :].min(-1)],
                                                          axis=-1)
         out_params.sigma = jnp.repeat(sigma[..., jnp.newaxis], out_shape[-1], -1) #repeat over time intervals
 
