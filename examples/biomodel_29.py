@@ -1,4 +1,5 @@
 import equinox as eqx
+from functools import partial
 from jax import jit, lax, vmap
 from jax.experimental.ode import odeint
 import jax.numpy as jnp
@@ -109,6 +110,7 @@ class ModelRollout(eqx.Module):
 		self.deltaT = deltaT
 		self.modelstepfunc = ModelStep(atol=atol, rtol=rtol, mxstep=mxstep)
 
+	@partial(jit, static_argnums=(0,))
 	def __call__(self, n_steps, y0=jnp.array([800.0, 0.0, 0.0, 0.0]), w0=jnp.array([]), c=jnp.array([180.0, 100.0, 410.0, 1.08, 40.0, 0.007, 20.0, 0.008, 300.0, 0.45, 22.0, 0.084, 18.0, 0.06, 34.0, 0.108, 40.0, 1.0]), t0=0.0):
 
 		@jit

@@ -101,7 +101,7 @@ class EAOptimizer(BaseOptimizer):
         log_data.train_loss = jnp.empty(shape=(0, ), dtype=jnp.float32)
         log_data.trainstep_time = jnp.empty(shape=(0, ), dtype=jnp.float32)
 
-        value_and_update = jit(jtu.Partial(self.value_and_update, loss_fn=jtu.Partial(jit(loss_fn))))
+        value_and_update = jtu.Partial(self.value_and_update, loss_fn=jtu.Partial(loss_fn))
 
         for optim_step_idx in range(self.n_optim_steps):
             step_start = time.time()
@@ -164,7 +164,7 @@ class SGDOptimizer(BaseOptimizer):
         log_data.train_loss = jnp.empty(shape=(0, ), dtype=jnp.float32)
         log_data.trainstep_time = jnp.empty(shape=(0, ), dtype=jnp.float32)
 
-        value_and_grad = jit(jtu.Partial(self.value_and_grad, loss_fn=jtu.Partial(jit(loss_fn))))
+        value_and_grad = jtu.Partial(self.value_and_grad, loss_fn=jtu.Partial(loss_fn))
 
         for optim_step_idx in range(self.n_optim_steps):
             step_start = time.time()

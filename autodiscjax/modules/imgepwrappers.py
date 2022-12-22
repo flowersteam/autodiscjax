@@ -26,8 +26,9 @@ class UniformRandomGenerator(BaseGenerator):
 
     def __init__(self, out_treedef, out_shape, out_dtype, low, high):
         super().__init__(out_treedef, out_shape, out_dtype, low, high)
-        self.uniform_fn = jit(jtu.Partial(uniform, low=low, high=high, out_treedef=self.out_treedef, out_shape=self.out_shape, out_dtype=self.out_dtype))
+        self.uniform_fn = jtu.Partial(uniform, low=low, high=high, out_treedef=self.out_treedef, out_shape=self.out_shape, out_dtype=self.out_dtype)
 
+    @eqx.filter_jit
     def __call__(self, key):
         return self.uniform_fn(key), None
 
@@ -38,6 +39,7 @@ class NormalRandomGenerator(BaseGenerator):
         super().__init__(out_treedef, out_shape, out_dtype, low, high)
         self.normal_fn = jit(jtu.Partial(normal, mean=mean, std=std, out_treedef=self.out_treedef, out_shape=self.out_shape, out_dtype=self.out_dtype))
 
+    @eqx.filter_jit
     def __call__(self, key):
         return self.normal_fn(key), None
 
@@ -225,7 +227,6 @@ class BaseGCInterventionOptimizer(adx.Module):
 
     def __call__(self, key, intervention_fn, interventions_params, system_rollout, goal_embedding_encoder, goal_achievement_loss, target_goals_embeddings):
 
-        @jit
         def loss_fn(key, params):
             key, subkey = jrandom.split(key)
             system_outputs, log_data = system_rollout(subkey, intervention_fn, params, None, None)

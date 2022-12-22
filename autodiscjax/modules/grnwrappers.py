@@ -31,7 +31,7 @@ class NoisePerturbationGenerator(adx.Module):
         zero_mean = jtu.tree_map(lambda shape, dtype: jnp.zeros(shape=shape, dtype=dtype), self.out_shape, self.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
         self.normal_fn = jit(jtu.Partial(normal, mean=zero_mean, out_treedef=self.out_treedef, out_shape=self.out_shape, out_dtype=self.out_dtype))
 
-
+    @eqx.filter_jit
     def __call__(self, key, system_outputs_library):
 
         std = jtu.tree_map(lambda shape, dtype: self.std*jnp.ones(shape=shape, dtype=dtype), self.out_shape,
@@ -97,7 +97,6 @@ class WallPerturbationGenerator(adx.Module):
         return out_params, None
 
 class NullIntervention(eqx.Module):
-    @jit
     def __call__(self, key, y, y_, w, w_, c, c_, t_, intervention_params):
         return y, w, c
 
@@ -122,7 +121,6 @@ class PiecewiseIntervention(eqx.Module):
         self.time_to_interval_fn = time_to_interval_fn
         self.null_intervention = NullIntervention()
 
-    @jit
     def __call__(self, key, y, y_, w, w_, c, c_, t_, intervention_params):
         """
         If time_to_interval_fn(t) returns -1, apply NullIntervention else apply intervention on corresponding interval
@@ -130,7 +128,6 @@ class PiecewiseIntervention(eqx.Module):
         interval_idx = self.time_to_interval_fn(t_)
         return lax.cond(interval_idx.sum() >= 0, self.apply, self.null_intervention, key, y, y_, w, w_, c, c_, interval_idx, intervention_params)
 
-    @jit
     def apply(self, key, y, y_, w, w_, c, c_, interval_idx, intervention_params):
         raise NotImplementedError
 
@@ -139,8 +136,6 @@ class PiecewiseSetConstantIntervention(PiecewiseIntervention):
     """
     intervention_params shape must be (batch_size, len(intervals))
     """
-
-    @jit
     def apply(self, key, y, y_, w, w_, c, c_, interval_idx, intervention_params):
         for y_idx, new_val in intervention_params.y.items():
             y = y.at[..., y_idx].set(hardplus(new_val[..., interval_idx]))
@@ -152,7 +147,6 @@ class PiecewiseSetConstantIntervention(PiecewiseIntervention):
         return y, w, c
 
 class PiecewiseAddConstantIntervention(PiecewiseIntervention):
-    @jit
     def apply(self, key, y, y_, w, w_, c, c_, interval_idx, intervention_params):
         for y_idx, new_val in intervention_params.y.items():
             y = y.at[..., y_idx].add(new_val[..., interval_idx])
@@ -171,7 +165,6 @@ class PiecewiseWallCollisionIntervention(PiecewiseIntervention):
         super().__init__(time_to_interval_fn)
         self.collision_fn = collision_fn
 
-    @jit
     def apply(self, key, y, y_, w, w_, c, c_, interval_idx, intervention_params):
         """
         The walls are described by
@@ -245,6 +238,7 @@ class GRNRollout(BaseSystemRollout):
 
         super().__init__(out_treedef, out_shape, out_dtype)
 
+    @jit
     def __call__(self, key,
                  intervention_fn=None, intervention_params=None,
                  perturbation_fn=None, perturbation_params=None):
@@ -256,7 +250,6 @@ class GRNRollout(BaseSystemRollout):
 
         rollout_start = time.time()
 
-        @jit
         def f(carry, x):
             (key, y_, w_, c_, t_) = carry
 
@@ -279,6 +272,7 @@ class GRNRollout(BaseSystemRollout):
         cs = jnp.moveaxis(cs, 0, -1)
 
         rollout_end = time.time()
+        log_data = adx.DictTree(system_rollout_time=rollout_end-rollout_start)
 
         outputs = adx.DictTree()
         outputs.ys = ys
@@ -286,7 +280,7 @@ class GRNRollout(BaseSystemRollout):
         outputs.cs = cs
         outputs.ts = ts
 
-        return outputs, None
+        return outputs, log_data
 
 class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
     filter_fn: Callable
@@ -312,11 +306,11 @@ class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
         
         super().__init__(out_treedef=out_treedef, out_shape=out_shape, out_dtype=out_dtype)
 
-        self.filter_fn = jit(jtu.Partial(lambda system_outputs: system_outputs.ys))
-        self.update_fn = jit(jtu.Partial(self.calc_statistics, time_window=time_window,
+        self.filter_fn = jtu.Partial(lambda system_outputs: system_outputs.ys)
+        self.update_fn = jtu.Partial(self.calc_statistics, time_window=time_window,
                             is_stable_std_epsilon=is_stable_std_epsilon,
                             is_converging_filter_size=is_converging_filter_size,
-                            is_periodic_max_frequency_threshold=is_periodic_max_frequency_threshold, deltaT=deltaT))
+                            is_periodic_max_frequency_threshold=is_periodic_max_frequency_threshold, deltaT=deltaT)
 
     def calc_statistics(self, y, time_window, 
                         is_stable_std_epsilon, is_converging_filter_size, 
@@ -328,7 +322,8 @@ class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
         
         
         stats = self.out_treedef.unflatten([mean_vals, std_vals, amplitude_vals, max_frequency_vals, diff_signs, is_stable, is_converging, is_monotonous, is_periodic])
-        return stats 
+        return stats
 
+    @eqx.filter_jit
     def __call__(self, key, system_outputs):
         return filter_update(system_outputs, self.filter_fn, self.update_fn, self.out_treedef), None
