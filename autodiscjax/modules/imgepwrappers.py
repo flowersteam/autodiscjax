@@ -78,7 +78,7 @@ class HypercubeGoalGenerator(BaseGoalGenerator):
     def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, system_rollout_statistics_library=None):
         library_min = jtu.tree_map(lambda x: x.min(0), reached_goal_embedding_library)
         library_max = jtu.tree_map(lambda x: x.max(0), reached_goal_embedding_library)
-        hypercube_center = jtu.tree_map(lambda min, max: (min+max/2.0), library_min, library_max)
+        hypercube_center = jtu.tree_map(lambda min, max: (min+(max-min)/2.0), library_min, library_max)
         hypercube_size = jtu.tree_map(lambda min, max: (max-min) * self.hypercube_scaling, library_min, library_max)
         low = jtu.tree_map(lambda center, size: center-size/2.0, hypercube_center, hypercube_size)
         low = self.clamp_low(low)

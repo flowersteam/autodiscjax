@@ -1,8 +1,52 @@
-from autodiscjax.modules.imgepwrappers import IMFlowGoalGenerator, LearningProgressIM
+from autodiscjax.modules.imgepwrappers import HypercubeGoalGenerator, IMFlowGoalGenerator, LearningProgressIM, NearestNeighborInterventionSelector, FilterGoalEmbeddingEncoder
 from jax import vmap
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
+
+def test_hypercube_goal_generator():
+    key = jrandom.PRNGKey(0)
+
+    batch_size = 50
+    gs_ndim = 2
+    goal_embedding_tree = "placeholder"
+    goal_embedding_treedef = jtu.tree_structure(goal_embedding_tree)
+    goal_embedding_shape = jtu.tree_map(lambda _: (gs_ndim,), goal_embedding_tree)
+    goal_embedding_dtype = jtu.tree_map(lambda _: jnp.float32, goal_embedding_tree)
+    low = 0.
+    high = None
+    hypercube_scaling = 1.5
+
+    hypercube_generator = HypercubeGoalGenerator(goal_embedding_treedef, goal_embedding_shape, goal_embedding_dtype,
+                                                 low, high, hypercube_scaling)
+    hypercube_generator = vmap(hypercube_generator, in_axes=(0, None, None, None), out_axes=0)
+    target_goal_embedding_library = None
+
+    key, subkey = jrandom.split(key)
+    S = jnp.array([[1., 0.5], [0.5, 0.05]])
+    mu = jnp.array([2, 2])
+    reached_goal_embedding_library = jrandom.normal(subkey, shape=(batch_size, gs_ndim)) @ S + mu
+    reached_goal_embedding_library = reached_goal_embedding_library @ S
+
+    key, *subkeys = jrandom.split(key, num=batch_size + 1)
+    next_goals, log_data = hypercube_generator(jnp.array(subkeys), target_goal_embedding_library,
+                                            reached_goal_embedding_library, None)
+
+    # Assert that all next goals are on the upper-right side of the grid
+    assert next_goals.shape == (batch_size, gs_ndim)
+    assert (next_goals > low).all()
+    hypercube_size = (reached_goal_embedding_library.max(0)-reached_goal_embedding_library.min(0))
+    hypercube_center = reached_goal_embedding_library.min(0) + hypercube_size/2.0
+    hypercube_low = hypercube_center - hypercube_size*hypercube_scaling/2.0
+    hypercube_high = hypercube_center + hypercube_size*hypercube_scaling/2.0
+    assert (next_goals > hypercube_low).all() and (next_goals < hypercube_high).all()
+
+    import matplotlib.pyplot as plt
+    plt.figure()
+    plt.scatter(*reached_goal_embedding_library.transpose(), label="reached goals")
+    plt.scatter(*next_goals.transpose(), label="next goals")
+    plt.legend()
+    plt.show()
 
 def test_im_flow_goal_generator():
     batch_size = 50
@@ -54,3 +98,23 @@ def test_im_flow_goal_generator():
     plt.scatter(*next_goals.transpose(), label="next goals")
     plt.legend()
     plt.show()
+
+def test_nn_intervention_selector():
+    key = jrandom.PRNGKey(0)
+
+    intervention_selector_tree = "placeholder"
+    intervention_selector_treedef = jtu.tree_structure(intervention_selector_tree)
+    intervention_selector_shape = jtu.tree_map(lambda _: (), intervention_selector_tree)
+    intervention_selector_dtype = jtu.tree_map(lambda _: jnp.int32, intervention_selector_tree)
+    k = 1
+    gc_intervention_selector = NearestNeighborInterventionSelector(intervention_selector_treedef,
+                                                                         intervention_selector_shape,
+                                                                         intervention_selector_dtype, k)
+    gc_intervention_selector = vmap(gc_intervention_selector, in_axes=(0, 0, None, None), out_axes=(0, None))
+
+    source_interventions_ids, log_data = gc_intervention_selector(jnp.array(subkeys), target_goals_embeddings,
+                                                                          reached_goal_embedding_library,
+                                                                          None)
+
+def test_filter_goal_embedding_encoder():
+    pass
