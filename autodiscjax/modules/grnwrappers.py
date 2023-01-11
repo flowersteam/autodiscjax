@@ -39,6 +39,11 @@ class NoisePerturbationGenerator(adx.Module):
         for y_idx, out_shape in self.out_shape.y.items():
             yranges = (system_outputs_library.ys[..., y_idx, :].max(-1) - system_outputs_library.ys[..., y_idx, :].min(-1))[..., jnp.newaxis] #shape(batch_size, 1)
             std.y[y_idx] = std.y[y_idx] * yranges
+        for w_idx, out_shape in self.out_shape.w.items():
+            wranges = (system_outputs_library.ws[..., w_idx, :].max(-1) - system_outputs_library.ws[..., w_idx, :].min(-1))[..., jnp.newaxis] #shape(batch_size, 1)
+            std.w[w_idx] = std.w[w_idx] * wranges
+        for c_idx, out_shape in self.out_shape.c.items():
+            std.c[c_idx] = std.c[c_idx] * system_outputs_library.cs[..., c_idx, :].max(-1)
 
         return self.normal_fn(key, std=std), None
 

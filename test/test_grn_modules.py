@@ -34,64 +34,61 @@ def test_noise_intervention():
 
     # Load the system
     biomodel_id = 29
-    n_steps = 6000
+    n_steps = 2000
     system_rollout = load_system(biomodel_id, n_steps)
 
-    # Noise perturbation Module
-    variant = "push"
-    perturbed_node_ids = [0, 1, 2]
-    perturbed_intervals = []
-    if variant == "dynamic":
-        for t_idx in range(5, int(n_steps*0.1/2), 5):
-            perturbed_intervals.append([t_idx, t_idx+0.1/5])
-        std = 0.01
-    elif variant == "push":
-        perturbed_intervals.append([int(n_steps*0.1/2), int(n_steps*0.1/2)+0.1/5])
-        std = 0.2
+    for variant in ["push_y", "push_w", "push_c", "noise_y", "noise_w", "noise_c"]:
+        perturbed_intervals = []
+        if "noise" in variant:
+            for t_idx in range(5, int(n_steps*0.1/2), 5):
+                perturbed_intervals.append([t_idx, t_idx+0.1])
+            std = 0.05
+        elif "push" in variant:
+            perturbed_intervals.append([int(n_steps*0.1/2), int(n_steps*0.1/2)+0.1])
+            std = 0.2
 
-    perturbation_fn = grn.PiecewiseAddConstantIntervention(
-        time_to_interval_fn=grn.TimeToInterval(intervals=perturbed_intervals))
+        perturbation_fn = grn.PiecewiseAddConstantIntervention(
+            time_to_interval_fn=grn.TimeToInterval(intervals=perturbed_intervals))
 
-    perturbation_params_tree = DictTree()
-    for y_idx in perturbed_node_ids:
-        perturbation_params_tree.y[y_idx] = "placeholder"
-    perturbation_params_treedef = jtu.tree_structure(perturbation_params_tree)
-    perturbation_params_shape = jtu.tree_map(lambda _: (len(perturbed_intervals),),
-                                             perturbation_params_tree)
-    perturbation_params_dtype = jtu.tree_map(lambda _: jnp.float32, perturbation_params_tree)
+        perturbation_params_tree = DictTree()
+        for var_idx in range(system_rollout.out_shape[variant[-1]+"s"][0]):
+            perturbation_params_tree[variant[-1]][var_idx] = "placeholder"
+        perturbation_params_treedef = jtu.tree_structure(perturbation_params_tree)
+        perturbation_params_shape = jtu.tree_map(lambda _: (len(perturbed_intervals),),
+                                                 perturbation_params_tree)
+        perturbation_params_dtype = jtu.tree_map(lambda _: jnp.float32, perturbation_params_tree)
 
-    perturbation_generator = grn.NoisePerturbationGenerator(perturbation_params_treedef,
-                                                            perturbation_params_shape,
-                                                            perturbation_params_dtype,
-                                                            std=std)
+        perturbation_generator = grn.NoisePerturbationGenerator(perturbation_params_treedef,
+                                                                perturbation_params_shape,
+                                                                perturbation_params_dtype,
+                                                                std=std)
 
-    # Batch modules
-    batched_perturbation_generator = vmap(perturbation_generator, in_axes=(0, 0), out_axes=0)
-    batched_system_rollout = vmap(system_rollout, in_axes=(0, None, 0, None, 0), out_axes=0)
+        # Batch modules
+        batched_perturbation_generator = vmap(perturbation_generator, in_axes=(0, 0), out_axes=0)
+        batched_system_rollout = vmap(system_rollout, in_axes=(0, None, 0, None, 0), out_axes=0)
 
-    # Rollouts with default trajectory
-    batch_size = 5
-    key, *subkeys = jrandom.split(key, num=batch_size + 1)
-    default_system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), None, None, None, None)
+        # Rollouts with default trajectory
+        batch_size = 3
+        key, *subkeys = jrandom.split(key, num=batch_size + 1)
+        default_system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), None, None, None, None)
 
-    # Sample perturbation params
-    key, *subkeys = jrandom.split(key, num=batch_size + 1)
-    perturbation_params, log_data = batched_perturbation_generator(jnp.array(subkeys), default_system_outputs)
+        # Sample perturbation params
+        key, *subkeys = jrandom.split(key, num=batch_size + 1)
+        perturbation_params, log_data = batched_perturbation_generator(jnp.array(subkeys), default_system_outputs)
 
-    # Evaluation Rollout with perturbations
-    key, *subkeys = jrandom.split(key, num=batch_size + 1)
-    after_system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), None, None, perturbation_fn,
-                                                           perturbation_params)
+        # Evaluation Rollout with perturbations
+        key, *subkeys = jrandom.split(key, num=batch_size + 1)
+        after_system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), None, None, perturbation_fn,
+                                                               perturbation_params)
 
-    # Show results
-    for sample_idx in range(batch_size):
-        plt.figure()
-        for y_idx in perturbed_node_ids:
-            plt.scatter(default_system_outputs.ts[sample_idx, :n_steps], default_system_outputs.ys[sample_idx, y_idx], s=2, label="before")
-            plt.scatter(after_system_outputs.ts[sample_idx, :n_steps], after_system_outputs.ys[sample_idx, y_idx], s=2, label="after")
-        # plt.scatter(default_system_outputs.ys[sample_idx, perturbed_node_ids[0]], default_system_outputs.ys[sample_idx, perturbed_node_ids[1]], s=2, label="before")
-        # plt.scatter(after_system_outputs.ys[sample_idx, perturbed_node_ids[0]], after_system_outputs.ys[sample_idx, perturbed_node_ids[1]], s=2, label="after")
+        # Show results
+        fig, ax = plt.subplots(1, batch_size)
+        for sample_idx in range(batch_size):
+            for y_idx in range(system_rollout.out_shape.ys[0]):
+                ax[sample_idx].scatter(default_system_outputs.ts[sample_idx], default_system_outputs.ys[sample_idx, y_idx], s=2, label="before")
+                ax[sample_idx].scatter(after_system_outputs.ts[sample_idx], after_system_outputs.ys[sample_idx, y_idx], s=2, label="after")
         plt.legend()
+        plt.suptitle(variant)
         plt.show()
 
 def test_wall_intervention():
