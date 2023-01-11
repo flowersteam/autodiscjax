@@ -34,7 +34,7 @@ class RNN(eqx.Module):
         return nn.sigmoid(self.linear(out) + self.bias)
 
 
-def test_sgd_optimizer():
+def test_optimizers():
 
     key = jrandom.PRNGKey(0)
 
