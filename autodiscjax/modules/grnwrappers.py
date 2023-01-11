@@ -219,12 +219,7 @@ class GRNRollout(BaseSystemRollout):
         self.c = c
         self.t0 = t0
         self.deltaT = deltaT
-
-        vmap_axes = (0 if y0.ndim == 2 else None, 0 if w0.ndim == 2 else None, 0 if c.ndim == 2 else None, None, None)
-        if 0 in vmap_axes:
-            self.grn_step = vmap(grn_step, in_axes=vmap_axes, out_axes=vmap_axes[:-1])
-        else:
-            self.grn_step = grn_step
+        self.grn_step = grn_step
 
         out_shape = adx.DictTree()
         out_shape.ys = self.y0.shape + (n_steps, )
@@ -327,3 +322,7 @@ class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
     @eqx.filter_jit
     def __call__(self, key, system_outputs):
         return filter_update(system_outputs, self.filter_fn, self.update_fn, self.out_treedef), None
+
+
+if __name__ == "__main__":
+    pass

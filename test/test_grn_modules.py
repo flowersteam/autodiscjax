@@ -161,3 +161,27 @@ def test_wall_intervention():
         plt.legend()
         plt.show()
 
+
+def test_system_rollout():
+    key = jrandom.PRNGKey(0)
+
+    # Load the system
+    biomodel_id = 341
+    n_steps = 100
+    system_rollout = load_system(biomodel_id, n_steps)
+
+    # test in default mode
+    key, subkey = jrandom.split(key)
+    system_outputs, log_data = system_rollout(subkey)
+    system_rollout.out_sanity_check(system_outputs)
+
+    # test in batch mode
+    batch_size = 50
+    batched_system_rollout = vmap(system_rollout, in_axes=(0), out_axes=(0, None))
+    key, *subkeys = jrandom.split(key, num=batch_size+1)
+    batched_system_outputs, log_data = batched_system_rollout(jnp.array(subkeys))
+    vmap(system_rollout.out_sanity_check)(batched_system_outputs)
+
+    for sample_idx in range(batch_size):
+        assert (batched_system_outputs.ys[sample_idx] == system_outputs.ys).all()
+
