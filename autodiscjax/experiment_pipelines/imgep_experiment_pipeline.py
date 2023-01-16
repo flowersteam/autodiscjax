@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
 import os
+import time
 
 def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: int, n_imgep_batches: int,
                          batch_size: int, save_folder: str,
@@ -18,7 +19,7 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
                          gc_intervention_optimizer: eqx.Module,
                          goal_embedding_encoder: eqx.Module,
                          goal_achievement_loss: eqx.Module,
-                         out_sanity_check=True, save_modules=False):
+                         out_sanity_check=True, save_modules=False, logger=None):
     # Set platform device
     jax.config.update("jax_platform_name", jax_platform_name)
 
@@ -77,6 +78,8 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
     batched_goal_embedding_encoder = vmap(goal_embedding_encoder, in_axes=(0, 0), out_axes=(0, None))
 
     # Run Exploration
+
+    tstart = time.time()
     for iteration_idx in range(n_random_batches + n_imgep_batches):
 
         if iteration_idx < n_random_batches:
@@ -171,17 +174,26 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         history = history.update_node("reached_goal_embedding_library", reached_goals_embeddings, merge_concatenate)
         history = history.update_node("system_rollout_statistics_library", system_rollouts_statistics, merge_concatenate)
 
-    # Save history and modules
-    history.save(os.path.join(save_folder, "experiment_history.pickle"), overwrite=True)
-    if save_modules:
-        eqx.tree_serialise_leaves(os.path.join(save_folder, "random_intervention_generator.eqx"), random_intervention_generator)
-        eqx.tree_serialise_leaves(os.path.join(save_folder, "intervention_fn.eqx"), intervention_fn)
-        eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_generator.eqx"), perturbation_generator)
-        eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_fn.eqx"), perturbation_fn)
-        eqx.tree_serialise_leaves(os.path.join(save_folder, "system_rollout.eqx"), system_rollout)
-        eqx.tree_serialise_leaves(os.path.join(save_folder, "rollout_statistics_encoder.eqx"), rollout_statistics_encoder)
-        eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_generator.eqx"), goal_generator)
-        eqx.tree_serialise_leaves(os.path.join(save_folder, "gc_intervention_selector.eqx"), gc_intervention_selector)
-        eqx.tree_serialise_leaves(os.path.join(save_folder, "gc_intervention_optimizer.eqx"), gc_intervention_optimizer)
-        eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_embedding_encoder.eqx"), goal_embedding_encoder)
-        eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_achievement_loss.eqx"), goal_achievement_loss)
+        # Save history and modules
+        history.save(os.path.join(save_folder, "experiment_history.pickle"), overwrite=True)
+        if save_modules:
+            eqx.tree_serialise_leaves(os.path.join(save_folder, "random_intervention_generator.eqx"), random_intervention_generator)
+            eqx.tree_serialise_leaves(os.path.join(save_folder, "intervention_fn.eqx"), intervention_fn)
+            eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_generator.eqx"), perturbation_generator)
+            eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_fn.eqx"), perturbation_fn)
+            eqx.tree_serialise_leaves(os.path.join(save_folder, "system_rollout.eqx"), system_rollout)
+            eqx.tree_serialise_leaves(os.path.join(save_folder, "rollout_statistics_encoder.eqx"), rollout_statistics_encoder)
+            eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_generator.eqx"), goal_generator)
+            eqx.tree_serialise_leaves(os.path.join(save_folder, "gc_intervention_selector.eqx"), gc_intervention_selector)
+            eqx.tree_serialise_leaves(os.path.join(save_folder, "gc_intervention_optimizer.eqx"), gc_intervention_optimizer)
+            eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_embedding_encoder.eqx"), goal_embedding_encoder)
+            eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_achievement_loss.eqx"), goal_achievement_loss)
+
+        if logger is not None:
+            logger.save()
+
+    tend = time.time()
+    print(tend - tstart)
+    if logger is not None:
+        logger.add_value("experiment_time", tend - tstart)
+        logger.save()
