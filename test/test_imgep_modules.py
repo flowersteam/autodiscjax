@@ -1,3 +1,4 @@
+from autodiscjax import DictTree
 from autodiscjax.modules.imgepwrappers import HypercubeGoalGenerator, IMFlowGoalGenerator, LearningProgressIM, NearestNeighborInterventionSelector, FilterGoalEmbeddingEncoder
 from jax import vmap
 import jax.numpy as jnp
@@ -102,6 +103,7 @@ def test_im_flow_goal_generator():
 def test_nn_intervention_selector():
     key = jrandom.PRNGKey(0)
 
+    batch_size = 10
     intervention_selector_tree = "placeholder"
     intervention_selector_treedef = jtu.tree_structure(intervention_selector_tree)
     intervention_selector_shape = jtu.tree_map(lambda _: (), intervention_selector_tree)
@@ -112,9 +114,29 @@ def test_nn_intervention_selector():
                                                                          intervention_selector_dtype, k)
     gc_intervention_selector = vmap(gc_intervention_selector, in_axes=(0, 0, None, None), out_axes=(0, None))
 
+    key, *subkeys = jrandom.split(key, num=batch_size + 1)
+    target_goals_embeddings = jnp.arange(10).reshape((10,1))
+    reached_goal_embedding_library = jnp.flip(target_goals_embeddings+0.1, axis=0)
     source_interventions_ids, log_data = gc_intervention_selector(jnp.array(subkeys), target_goals_embeddings,
                                                                           reached_goal_embedding_library,
                                                                           None)
+    assert (source_interventions_ids == jnp.flip(jnp.arange(10), axis=0)).all()
 
 def test_filter_goal_embedding_encoder():
-    pass
+    key = jrandom.PRNGKey(0)
+
+    goal_embedding_tree = "placeholder"
+    goal_embedding_treedef = jtu.tree_structure(goal_embedding_tree)
+    goal_embedding_shape = jtu.tree_map(lambda _: (3, ),
+                                        goal_embedding_tree)
+    goal_embedding_dtype = jtu.tree_map(lambda _: jnp.float32, goal_embedding_tree)
+    goal_filter_fn = jtu.Partial(
+        lambda outputs: jnp.array([outputs.a[-1], outputs.b[-1], outputs.c[-1]]))
+    goal_embedding_encoder = FilterGoalEmbeddingEncoder(goal_embedding_treedef, goal_embedding_shape,
+                                                              goal_embedding_dtype, goal_filter_fn)
+
+    outputs = DictTree(a=jnp.arange(10), b=jnp.arange(10,20), c=jnp.arange(20,30))
+
+    key, subkey = jrandom.split(key)
+    filtered_ouputs, log_data = goal_embedding_encoder(subkey, outputs)
+    assert (filtered_ouputs == jnp.array([9, 19, 29])).all()
