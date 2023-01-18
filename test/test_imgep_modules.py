@@ -88,7 +88,7 @@ def test_im_flow_goal_generator():
     key, *subkeys = jrandom.split(key, num=batch_size + 1)
     next_goals, log_data = imflow_generator(jnp.array(subkeys), target_goal_embedding_library, reached_goal_embedding_library, None)
 
-    # Assert that all next goals are on the upper-right side of the grid
+    # Assert that most next goals are on the upper-right side of the grid
     assert next_goals.shape == (batch_size, gs_ndim)
     assert ((next_goals > 0.5).all(-1).sum() / len(next_goals)) > 0.8
 

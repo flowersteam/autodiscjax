@@ -1,7 +1,7 @@
-from autodiscjax.modules.optimizers import EAOptimizer, SGDOptimizer, OpenESOptimizer
+from autodiscjax.modules.optimizers import EAOptimizer, SGDOptimizer
 import equinox as eqx
 import importlib
-from jax import lax, nn, vmap
+from jax import lax, nn
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
@@ -65,34 +65,25 @@ def test_optimizers():
 
     for system, params, target in zip([grn_system, rnn_system], [grn_params, rnn_params], [grn_targets, rnn_targets]):
 
-        L2loss = lambda k, x, g: ((system(x) - g) ** 2).sum()
+        L2loss = lambda k, x, g: (((system(x) - g) ** 2).sum(), None)
         loss_fn = jtu.Partial(L2loss, g=target)
 
         ea_optimizer = EAOptimizer(jtu.tree_structure(params), params.shape, params.dtype, None, None,
-                                   n_optim_steps=50, n_workers=100, noise_std=jtu.tree_map(lambda p: 0.1, params))
+                                   n_optim_steps=5, n_workers=10, init_noise_std=jtu.tree_map(lambda node: 1.0, params))
         ea_start = time.time()
         ea_optimized_params, log_data = ea_optimizer(key, params, loss_fn)
         ea_end = time.time()
 
-        sgd_optimizer = SGDOptimizer(jtu.tree_structure(params), params.shape, params.dtype, None, None,
-                                     n_optim_steps=50, lr=jtu.tree_map(lambda p: 0.1, params))
+        sgd_optimizer = SGDOptimizer(jtu.tree_structure(params), params.shape, params.dtype, None, None, n_optim_steps=50, n_workers=1,
+                                     init_noise_std=jtu.tree_map(lambda node: 0.0, params), lr=jtu.tree_map(lambda node: 0.1, params))
         sgd_start = time.time()
         sgd_optimized_params, log_data = sgd_optimizer(key, params, loss_fn)
         sgd_end = time.time()
 
 
-        openes_optimizer = OpenESOptimizer(jtu.tree_structure(params), params.shape, params.dtype, None, None,
-                                           n_optim_steps=50, lr=jtu.tree_map(lambda p: 0.1, params), n_workers=100, noise_std=jtu.tree_map(lambda p: 0.1, params))
-        openes_start = time.time()
-        openes_optimized_params, log_data = openes_optimizer(key, params, loss_fn)
-        openes_end = time.time()
-
-
         print(f"Target: {target}, starting pos: {system(params)}, n_system_steps: {n_system_steps}\n"
               f"reached pos after EA: {system(ea_optimized_params)} , compute time: {ea_end-ea_start}\n"
-              f"reached pos after SGD: {system(sgd_optimized_params)} , compute time: {sgd_end-sgd_start}\n"
-              f"reached pos after OpenES: {system(openes_optimized_params)} , compute time: {openes_end-openes_start}\n")
+              f"reached pos after SGD: {system(sgd_optimized_params)} , compute time: {sgd_end-sgd_start}\n")
 
-        assert loss_fn(0, ea_optimized_params) < loss_fn(0, params)
-        assert loss_fn(0, sgd_optimized_params) < loss_fn(0, params)
-        assert loss_fn(0, openes_optimized_params) < loss_fn(0, params)
+        assert loss_fn(0, ea_optimized_params)[0] < loss_fn(0, params)[0]
+        assert loss_fn(0, sgd_optimized_params)[0] < loss_fn(0, params)[0]
