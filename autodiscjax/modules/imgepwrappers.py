@@ -1,5 +1,6 @@
 import autodiscjax as adx
-from autodiscjax.modules.optimizers import ClampModule, BaseOptimizer
+from autodiscjax.modules.misc import ClampModule
+from autodiscjax.modules.optimizers import BaseOptimizer
 from autodiscjax.utils.misc import filter, nearest_neighbors, normal, uniform
 import equinox as eqx
 from functools import partial
