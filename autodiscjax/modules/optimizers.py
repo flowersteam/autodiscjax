@@ -1,5 +1,5 @@
 import autodiscjax as adx
-from autodiscjax.utils.accessors import merge_concatenate
+from autodiscjax.modules.misc import ClampModule
 from autodiscjax.utils.misc import normal
 import equinox as eqx
 from jax import jit, value_and_grad, vmap
@@ -8,149 +8,110 @@ import jax.random as jrandom
 import jax.tree_util as jtu
 from jaxtyping import PyTree
 import optax
-import time
 from typing import Callable
 
-class ClampModule(adx.Module):
-    low: PyTree = None
-    high: PyTree = None
-
-    def __init__(self, out_treedef, out_shape, out_dtype, low=None, high=None):
-        super().__init__(out_treedef, out_shape, out_dtype)
-
-        if isinstance(low, float):
-            self.low = self.out_treedef.unflatten([low]*self.out_treedef.num_leaves)
-        else:
-            self.low = low
-
-        if isinstance(high, float):
-            self.high = self.out_treedef.unflatten([high]*self.out_treedef.num_leaves)
-        else:
-            self.high = high
-
-    @eqx.filter_jit
-    def clamp(self, pytree, is_leaf=None):
-        return self.clamp_high(self.clamp_low(pytree, is_leaf=is_leaf), is_leaf=is_leaf)
-
-    @eqx.filter_jit
-    def clamp_low(self, pytree, is_leaf=None):
-        if self.low is not None:
-            return jtu.tree_map(lambda val, low: jnp.maximum(val, low), pytree, self.low, is_leaf=is_leaf)
-        else:
-            return pytree
-
-    @eqx.filter_jit
-    def clamp_high(self, pytree, is_leaf=None):
-        if self.high is not None:
-            return jtu.tree_map(lambda val, high: jnp.minimum(val, high), pytree, self.high, is_leaf=is_leaf)
-        else:
-            return pytree
-
 class BaseOptimizer(ClampModule):
+    n_optim_steps: int = eqx.static_field()
+    n_workers: int = eqx.static_field()
 
-    def __call__(self, key, params, loss_fn):
+    def __init__(self, out_treedef, out_shape, out_dtype, low, high, n_optim_steps, n_workers):
+        super().__init__(out_treedef, out_shape, out_dtype, low, high)
+        self.n_optim_steps = n_optim_steps
+        self.n_workers = n_workers
+
+    def __call__(self, key, params, evaluate_worker_fn):
+        """
+        evaluate_worker_fn: key, params -> loss, log_data
+        """
         raise NotImplementedError
 
 
 class EAOptimizer(BaseOptimizer):
-    """
-    very simple EA explorer that do random mutations of params and select the best one
-    """
-    n_optim_steps: int = eqx.static_field()
-    n_workers: int = eqx.static_field()
-    noise_std: adx.DictTree
+    init_noise_std: float
     schedule_fn: Callable
 
-    def __init__(self, out_treedef, out_shape, out_dtype, low, high, n_optim_steps, n_workers, noise_std):
-        super().__init__(out_treedef, out_shape, out_dtype, low, high)
-        self.n_optim_steps = n_optim_steps
-        self.n_workers = n_workers
-        self.noise_std = noise_std
-        self.schedule_fn = jtu.Partial(optax.polynomial_schedule(init_value=1., end_value=0., power=1, transition_steps=n_optim_steps))
-
-    def value_and_update(self, key, params, loss_fn, optim_step_idx):
-
-        # random mutations
-        zero_mean = jtu.tree_map(lambda p: jnp.zeros_like(p), params)
-        out_treedef = jtu.tree_structure(params)
-        out_shape = jtu.tree_map(lambda p: (self.n_workers,) + p.shape, params)
-        out_dtype = jtu.tree_map(lambda p: p.dtype, params)
-        key, subkey = jrandom.split(key)
-        batched_params = jtu.tree_map(lambda p: jnp.repeat(p[jnp.newaxis], self.n_workers, axis=0), params)
-        noise_std = jtu.tree_map(lambda e: self.schedule_fn(optim_step_idx) * e, self.noise_std)
-        noise = normal(key, zero_mean, noise_std, out_treedef, out_shape, out_dtype)
-        worker_params = jtu.tree_map(lambda p, e: p + e, batched_params, noise)
-
-        # evaluate fitness
-        subkeys = jrandom.split(key, 1 + self.n_workers)
-        key, subkeys = subkeys[0], subkeys[1:]
-        losses = vmap(loss_fn)(subkeys, worker_params)
-        losses_flat, _ = jtu.tree_flatten(losses)
-        losses_flat = jnp.concatenate(losses_flat)  # shape (n_workers, )
-
-        # Select best worker
-        best_worker_idx = losses_flat.argmin()
-        params = jtu.tree_map(lambda p: p[best_worker_idx], worker_params)
-
-        return losses_flat.min(), params
-
-    def __call__(self, key, params, loss_fn):
+    def __init__(self, out_treedef, out_shape, out_dtype, low, high, n_optim_steps, n_workers, init_noise_std):
+        super().__init__(out_treedef, out_shape, out_dtype, low, high, n_optim_steps, n_workers)
+        self.init_noise_std = init_noise_std
+        self.schedule_fn = jtu.Partial(optax.polynomial_schedule(init_value=1.0, end_value=0., power=1, transition_steps=n_optim_steps))
 
 
-        log_data = adx.DictTree()
-        log_data.train_loss = jnp.empty(shape=(0, ), dtype=jnp.float32)
-        log_data.trainstep_time = jnp.empty(shape=(0, ), dtype=jnp.float32)
+    def update_worker(self, key, worker_params, optim_step_idx):
+        zero_mean = jtu.tree_map(lambda p: jnp.zeros_like(p), worker_params)
+        noise_std = jtu.tree_map(lambda init_noise_std: self.schedule_fn(optim_step_idx)*init_noise_std, self.init_noise_std)
+        noise = normal(key, zero_mean, noise_std, self.out_treedef, self.out_shape, self.out_dtype)
+        worker_params = jtu.tree_map(lambda p, e: p + e, worker_params, noise)
+        return worker_params
 
-        value_and_update = jtu.Partial(self.value_and_update, loss_fn=jtu.Partial(loss_fn))
+
+    def __call__(self, key, params, evaluate_worker_fn):
+        update_workers = vmap(self.update_worker, in_axes=(0, 0, None), out_axes=0)
+        evaluate_workers = vmap(evaluate_worker_fn, in_axes=(0, 0), out_axes=(0, 0))
+
+        log_data = []
+        selected_worker_idx = 0
 
         for optim_step_idx in range(self.n_optim_steps):
-            step_start = time.time()
+            # Replicate best worker params
+            workers_params = jtu.tree_map(lambda p: jnp.repeat(p[jnp.newaxis], self.n_workers, axis=0), params)
 
-            # get updates
-            key, subkey = jrandom.split(key)
-            loss, params = value_and_update(subkey, params, optim_step_idx=optim_step_idx)
+            # Update worker params with random mutations
+            key, *subkeys = jrandom.split(key, num=self.n_workers + 1)
+            workers_params = update_workers(jnp.array(subkeys), workers_params, optim_step_idx)
 
-            # Clamp params
-            params = self.clamp(params)
+            # Evaluate fitness
+            key, *subkeys = jrandom.split(key, num=self.n_workers + 1)
+            losses, evaluate_log_data = evaluate_workers(jnp.array(subkeys), workers_params)
 
-            step_end = time.time()
-            log_data = log_data.update_node("train_loss", loss[jnp.newaxis], merge_concatenate)
-            log_data = log_data.update_node("trainstep_time", jnp.array([step_end-step_start]), merge_concatenate)
+            # append worker params and source ids to log
+            if isinstance(evaluate_log_data, adx.DictTree):
+                evaluate_log_data.workers_params = workers_params
+                evaluate_log_data.source_workers_ids = jnp.array([selected_worker_idx]*self.n_workers)
+            log_data.append(evaluate_log_data)
+
+            # Select best worker
+            selected_worker_idx = losses.argmin()
+            params = jtu.tree_map(lambda p: p[selected_worker_idx], workers_params)
 
         return params, log_data
 
 
 class SGDOptimizer(BaseOptimizer):
-    n_optim_steps: int = eqx.static_field()
-    optimizer: optax._src.base.GradientTransformation
+    init_noise_std: PyTree
+    lr: PyTree
 
-    def __init__(self, out_treedef, out_shape, out_dtype, low, high, n_optim_steps, lr):
-        super().__init__(out_treedef, out_shape, out_dtype, low, high)
-        self.n_optim_steps = n_optim_steps
-        lr_flat, lr_treedef = jtu.tree_flatten(lr)
+    def __init__(self, out_treedef, out_shape, out_dtype, low, high, n_optim_steps, n_workers, init_noise_std, lr):
+        super().__init__(out_treedef, out_shape, out_dtype, low, high, n_optim_steps, n_workers)
+        self.init_noise_std = init_noise_std
+        self.lr = lr
+
+    def init_worker(self, key, params):
+        zero_mean = jtu.tree_map(lambda p: jnp.zeros_like(p), params)
+        noise = normal(key, zero_mean, self.init_noise_std, self.out_treedef, self.out_shape, self.out_dtype)
+        params = jtu.tree_map(lambda p, e: p + e, params, noise)
+        return params
+
+    @eqx.filter_jit
+    def update_worker(self, params, grads, optimizer, opt_state):
+        updates, opt_state = optimizer.update(grads, opt_state)
+        params = optax.apply_updates(params, updates)
+        return params, optimizer, opt_state
+
+    def call_worker(self, key, params, evaluate_worker_fn):
+
+        # Prepare optizer
+        lr_flat, lr_treedef = jtu.tree_flatten(self.lr)
         leaves_ids = list(range(lr_treedef.num_leaves))
         param_labels = lr_treedef.unflatten(leaves_ids)
         transforms = {}
         for leaf_idx, leaf_lr in zip(leaves_ids, lr_flat):
             transforms[leaf_idx] = optax.adam(leaf_lr)
 
+        # Init params
+        key, subkey = jrandom.split(key)
+        params = self.init_worker(subkey, params)
         if isinstance(param_labels, adx.DictTree):
             param_labels = param_labels.to_dict()
-        self.optimizer = optax.multi_transform(transforms, param_labels)
-
-    def value_and_grad(self, key, params, loss_fn):
-        return value_and_grad(loss_fn, argnums=1)(key, params)
-
-    @eqx.filter_jit
-    def update(self, params, grads, opt_state):
-        updates, opt_state = self.optimizer.update(grads, opt_state)
-        params = optax.apply_updates(params, updates)
-        return params, opt_state
-
-    def __call__(self, key, params, loss_fn):
-        # TODO:
-        #  remove the adx.DictTree to dict conversion if addict issue mewwts/addict#150 gets solved
-        #  scan loop
 
         if isinstance(params, adx.DictTree):
             params = params.to_dict()
@@ -158,74 +119,52 @@ class SGDOptimizer(BaseOptimizer):
         else:
             is_params_dictree = False
 
-        opt_state = self.optimizer.init(params)
 
-        log_data = adx.DictTree()
-        log_data.train_loss = jnp.empty(shape=(0, ), dtype=jnp.float32)
-        log_data.trainstep_time = jnp.empty(shape=(0, ), dtype=jnp.float32)
+        # Init optimizer
+        optimizer = optax.multi_transform(transforms, param_labels)
+        opt_state = optimizer.init(params)
 
-        value_and_grad = jtu.Partial(self.value_and_grad, loss_fn=jtu.Partial(loss_fn))
+        log_data = []
 
         for optim_step_idx in range(self.n_optim_steps):
-            step_start = time.time()
 
-            key, subkey = jrandom.split(key)
             if is_params_dictree:
                 params = adx.DictTree(params)
                 # Clamp params
                 params = self.clamp(params)
 
-            loss, grads = value_and_grad(subkey, params)
+            key, subkey = jrandom.split(key)
+            (loss, evaluate_log_data), grads = value_and_grad(evaluate_worker_fn, argnums=1, has_aux=True)(subkey, params)
 
             if is_params_dictree:
                 params = params.to_dict()
                 grads = grads.to_dict()
 
-            params, opt_state = self.update(params, grads, opt_state)
+            params, optimizer, opt_state = self.update_worker(params, grads, optimizer, opt_state)
 
-            step_end = time.time()
-            log_data = log_data.update_node("train_loss", loss[jnp.newaxis], merge_concatenate)
-            log_data = log_data.update_node("trainstep_time", jnp.array([step_end - step_start]), merge_concatenate)
+            # append worker params and source ids to log
+            if isinstance(evaluate_log_data, adx.DictTree):
+                evaluate_log_data.workers_params = params
+                evaluate_log_data.source_workers_ids = jnp.array([0])
+            log_data.append(evaluate_log_data)
 
         if is_params_dictree:
             params = adx.DictTree(params)
             params = self.clamp(params)
 
+        return params, loss, log_data
+
+
+    def __call__(self, key, params, evaluate_worker_fn):
+
+        # Replicate worker params
+        workers_params = jtu.tree_map(lambda p: jnp.repeat(p[jnp.newaxis], self.n_workers, axis=0), params)
+
+        key, *subkeys = jrandom.split(key, num=self.n_workers+1)
+        workers_params, losses, log_data = vmap(self.call_worker, in_axes=(0, 0, None), out_axes=(0, 0, 0))(jnp.array(subkeys), workers_params, evaluate_worker_fn)
+
+        # Select best worker
+        selected_worker_idx = losses.argmin()
+        params = jtu.tree_map(lambda p: p[selected_worker_idx], workers_params)
+
         return params, log_data
-
-
-class OpenESOptimizer(SGDOptimizer):
-    """
-    Reference: Salimans et al. (2017) - https://arxiv.org/pdf/1703.03864.pdf
-    """
-    n_workers: int = eqx.static_field()
-    noise_std: adx.DictTree
-
-    def __init__(self, out_treedef, out_shape, out_dtype, low, high, n_optim_steps: int, lr: adx.DictTree, n_workers: int, noise_std: adx.DictTree):
-        """
-        Args:
-            n_workers: int
-            noise_std: adx.DictTree with same structure as params
-        """
-        super().__init__(out_treedef, out_shape, out_dtype, low, high, n_optim_steps, lr)
-        self.n_workers = n_workers
-        self.noise_std = noise_std
-
-    def value_and_grad(self, key, params, loss_fn):
-        zero_mean = jtu.tree_map(lambda p: jnp.zeros_like(p), params)
-        out_treedef = jtu.tree_structure(params)
-        out_shape = jtu.tree_map(lambda p: (self.n_workers,) + p.shape, params)
-        out_dtype = jtu.tree_map(lambda p: p.dtype, params)
-
-        key, subkey = jrandom.split(key)
-        batched_params = jtu.tree_map(lambda p: jnp.repeat(p[jnp.newaxis], self.n_workers, axis=0), params)
-        noise = normal(key, zero_mean, self.noise_std, out_treedef, out_shape, out_dtype)
-        worker_params = jtu.tree_map(lambda p, e: p+e, batched_params, noise)
-        subkeys = jrandom.split(key, 1+self.n_workers)
-        key, subkeys = subkeys[0], subkeys[1:]
-        losses = vmap(loss_fn)(subkeys, worker_params)
-        losses = jtu.tree_map(lambda node: losses, self.noise_std)
-        epsilons = jtu.tree_map(lambda p_new, p, sigma: (p_new - p) / sigma, worker_params, params, self.noise_std)
-        grads = jtu.tree_map(lambda l, eps, sigma: (l.reshape((len(l), ) + (1, ) * len(eps.shape[1:])) * eps).sum(0) / (self.n_workers * sigma), losses, epsilons, self.noise_std)
-        #NB: above formula is the same than Salimans et al. (2017) replacing F by -loss
-        return loss_fn(key, params), grads

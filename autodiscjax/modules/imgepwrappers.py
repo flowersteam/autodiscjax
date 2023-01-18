@@ -107,14 +107,18 @@ class LearningProgressIM(BaseIM):
         previously_reached_goals_flat = jnp.concatenate(previously_reached_goals_flat, axis=-1)
 
         if len(previously_reached_goals_flat) > 0:
-            closest_intervention_ids, distances = nearest_neighbors(target_goals_flat, previously_reached_goals_flat,
+            previously_closest_intervention_ids, distances = nearest_neighbors(target_goals_flat, previously_reached_goals_flat,
                                                                     k=min(len(previously_reached_goals_flat), 1))
-            previously_closest_goals_flat = previously_reached_goals_flat[closest_intervention_ids.squeeze()]
+            previously_closest_goals_flat = previously_reached_goals_flat[previously_closest_intervention_ids.squeeze()]
+
+            new_closest_intervention_ids, distances = nearest_neighbors(target_goals_flat, reached_goals_flat,
+                                                                        k=min(len(reached_goals_flat), 1))
+            new_closest_goals_flat = reached_goals_flat[new_closest_intervention_ids.squeeze()]
 
             def LP(goal_points, starting_points, reached_points):
                 return jnp.sqrt(jnp.square(goal_points - starting_points).sum(-1)) - jnp.sqrt(jnp.square(goal_points - reached_points).sum(-1))
 
-            IM_vals, IM_grads = vmap(value_and_grad(LP, 0), in_axes=(0, 0, 0))(target_goals_flat, previously_closest_goals_flat, reached_goals_flat)
+            IM_vals, IM_grads = vmap(value_and_grad(LP, 0), in_axes=(0, 0, 0))(target_goals_flat, previously_closest_goals_flat, new_closest_goals_flat)
 
         else:
             IM_vals = jnp.zeros(shape=(batch_size, ), dtype=jnp.float32)
@@ -209,15 +213,16 @@ class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
 
         return selected_intervention_ids, None
 
-class BaseGoalAchievementLoss(eqx.Module):
+class BaseGoalAchievementLoss(adx.Module):
     @jit
-    def __call__(self, reached_goal, target_goal):
+    def __call__(self, key, reached_goal, target_goal):
         raise NotImplementedError
 
 class L2GoalAchievementLoss(BaseGoalAchievementLoss):
     @jit
-    def __call__(self, reached_goal, target_goal):
-        return jnp.sqrt(jnp.square(reached_goal - target_goal).sum())
+    def __call__(self, key, reached_goal, target_goal):
+        return jnp.sqrt(jnp.square(reached_goal - target_goal).sum()), None
+
 
 class BaseGCInterventionOptimizer(adx.Module):
     optimizer: BaseOptimizer
@@ -226,19 +231,43 @@ class BaseGCInterventionOptimizer(adx.Module):
         super().__init__(optimizer.out_treedef, optimizer.out_shape, optimizer.out_dtype)
         self.optimizer = optimizer
 
-    def __call__(self, key, intervention_fn, interventions_params, system_rollout, goal_embedding_encoder, goal_achievement_loss, target_goals_embeddings):
+    def __call__(self, key, intervention_params, target_goal_embedding, perturbation_generator, perturbation_fn, intervention_fn, system_rollout, goal_embedding_encoder, goal_achievement_loss, rollout_statistics_encoder):
 
-        def loss_fn(key, params):
+        def evaluate_worker_fn(key, intervention_params):
+
+            # generate perturbation
             key, subkey = jrandom.split(key)
-            system_outputs, log_data = system_rollout(subkey, intervention_fn, params, None, None)
+            perturbation_params, perturbation_generator_log_data = perturbation_generator(subkey)
+
+            # rollout the system
+            key, subkey = jrandom.split(key)
+            system_output, system_rollout_log_data = system_rollout(subkey, intervention_fn, intervention_params,
+                                                                    perturbation_fn, perturbation_params)
 
             # represent outputs -> goals
             key, subkey = jrandom.split(key)
-            reached_goals_embeddings, log_data = goal_embedding_encoder(subkey, system_outputs)
+            reached_goal_embedding, goal_embedding_encoder_log_data = goal_embedding_encoder(subkey, system_output)
 
-            return goal_achievement_loss(reached_goals_embeddings, target_goals_embeddings)
+            # compute goal-conditionned loss
+            key, subkey = jrandom.split(key)
+            gc_loss, goal_achievement_loss_log_data = goal_achievement_loss(subkey, reached_goal_embedding, target_goal_embedding)
 
-        return self.optimizer(key, interventions_params, loss_fn)
+            # represent outputs -> statistics
+            system_rollout_statistics, rollout_statistics_encoder_log_data = rollout_statistics_encoder(subkey,
+                                                                                                        system_output)
+
+            # redirect module outputs via log data
+            log_data = adx.DictTree()
+            log_data.perturbation_generator.outputs, log_data.perturbation_generator.log_data = perturbation_params, perturbation_generator_log_data
+            log_data.system_rollout.outputs, log_data.system_rollout.log_data = system_output, system_rollout_log_data
+            log_data.goal_embedding_encoder.outputs, log_data.goal_embedding_encoder.log_data = reached_goal_embedding, goal_embedding_encoder_log_data
+            log_data.goal_achievement_loss.outputs, log_data.goal_achievement_loss.log_data = gc_loss, goal_achievement_loss_log_data
+            log_data.rollout_statistics_encoder.outputs, log_data.rollout_statistics_encoder.log_data = system_rollout_statistics, rollout_statistics_encoder_log_data
+
+            return gc_loss, log_data
+
+        return self.optimizer(key, intervention_params, evaluate_worker_fn)
+
 
 class BaseSystemRollout(adx.Module):
     @jit
