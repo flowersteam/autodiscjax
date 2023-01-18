@@ -153,7 +153,11 @@ def create_goal_generator_module(goal_embedding_encoder, goal_generator_config):
 
 
 def create_goal_achievement_loss_module(goal_achievement_loss_config):
-    goal_achievement_loss = imgep.L2GoalAchievementLoss()
+    gc_loss_tree = "placeholder"
+    gc_loss_treedef = jtu.tree_structure(gc_loss_tree)
+    gc_loss_shape = jtu.tree_map(lambda _: (), gc_loss_tree)
+    gc_loss_dtype = jtu.tree_map(lambda _: jnp.float32, gc_loss_tree)
+    goal_achievement_loss = imgep.L2GoalAchievementLoss(gc_loss_treedef, gc_loss_shape, gc_loss_dtype)
     return goal_achievement_loss
 
 def create_gc_intervention_selector_module(gc_intervention_selector_config):
@@ -174,28 +178,13 @@ def create_gc_intervention_optimizer_module(random_intervention_generator, gc_in
                                             random_intervention_generator.low,
                                             random_intervention_generator.high,
                                             gc_intervention_optimizer_config.n_optim_steps,
-                                            jtu.tree_map(
-                                                lambda low, high: gc_intervention_optimizer_config.lr * (high - low),
-                                                random_intervention_generator.low,
-                                                random_intervention_generator.high))
+                                            gc_intervention_optimizer_config.n_workers,
+                                            init_noise_std=jtu.tree_map(lambda low, high: gc_intervention_optimizer_config.init_noise_std*(high-low),
+                                                                       random_intervention_generator.low, random_intervention_generator.high),
+                                            lr=jtu.tree_map(lambda low, high: gc_intervention_optimizer_config.lr*(high-low),
+                                                                       random_intervention_generator.low, random_intervention_generator.high)
+                                            )
 
-    elif gc_intervention_optimizer_config.optimizer_type == "OpenES":
-        optimizer = optimizers.OpenESOptimizer(random_intervention_generator.out_treedef,
-                                               random_intervention_generator.out_shape,
-                                               random_intervention_generator.out_dtype,
-                                               random_intervention_generator.low,
-                                               random_intervention_generator.high,
-                                               gc_intervention_optimizer_config.n_optim_steps,
-                                               jtu.tree_map(
-                                                   lambda low, high: gc_intervention_optimizer_config.lr * (high - low),
-                                                   random_intervention_generator.low,
-                                                   random_intervention_generator.high),
-                                               gc_intervention_optimizer_config.n_workers,
-                                               jtu.tree_map(
-                                                   lambda low, high: gc_intervention_optimizer_config.noise_std * (high - low),
-                                                   random_intervention_generator.low,
-                                                   random_intervention_generator.high),
-                                               )
 
     elif gc_intervention_optimizer_config.optimizer_type == "EA":
         optimizer = optimizers.EAOptimizer(random_intervention_generator.out_treedef,
@@ -205,11 +194,9 @@ def create_gc_intervention_optimizer_module(random_intervention_generator, gc_in
                                            random_intervention_generator.high,
                                            gc_intervention_optimizer_config.n_optim_steps,
                                            gc_intervention_optimizer_config.n_workers,
-                                           jtu.tree_map(
-                                               lambda low, high: gc_intervention_optimizer_config.noise_std * (
-                                                           high - low),
-                                               random_intervention_generator.low,
-                                               random_intervention_generator.high),
+                                           init_noise_std=jtu.tree_map(lambda low, high: gc_intervention_optimizer_config.init_noise_std*(high-low),
+                                                                       random_intervention_generator.low, random_intervention_generator.high)
+
                                            )
 
     else:
