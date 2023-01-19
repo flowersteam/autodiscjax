@@ -28,12 +28,16 @@ def create_system_rollout_module(system_rollout_config):
                                     deltaT=system_rollout_config.deltaT, grn_step=grnstep)
     return system_rollout
 
-def create_rollout_statistics_encoder_module(system_rollout):
+def create_rollout_statistics_encoder_module(system_rollout, rollout_statistics_encoder_config):
     rollout_statistics_encoder = grn.GRNRolloutStatisticsEncoder(y_shape=system_rollout.out_shape.ys,
-                                                                 time_window=jnp.r_[-100:0],
-                                                                 is_stable_std_epsilon=1e-2,
-                                                                 is_converging_filter_size=50,
-                                                                 is_periodic_max_frequency_threshold=40, deltaT=system_rollout.deltaT)
+                                                                 is_stable_time_window=jnp.r_[-system_rollout.n_steps//100:0],
+                                                                 is_stable_std_epsilon=rollout_statistics_encoder_config.is_stable_std_epsilon,
+                                                                 is_converging_time_window=jnp.r_[-system_rollout.n_steps//2:0],
+                                                                 is_converging_ratio_threshold=rollout_statistics_encoder_config.is_converging_ratio_threshold,
+                                                                 is_monotonous_time_window=jnp.r_[-system_rollout.n_steps//100:0],
+                                                                 is_periodic_time_window=jnp.r_[-system_rollout.n_steps//2:0],
+                                                                 is_periodic_max_frequency_threshold=rollout_statistics_encoder_config.is_periodic_max_frequency_threshold,
+                                                                 is_periodic_deltaT=system_rollout.deltaT)
     return rollout_statistics_encoder
 
 def create_intervention_module(intervention_config):

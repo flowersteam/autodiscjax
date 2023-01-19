@@ -1,6 +1,9 @@
 from addict import Dict
 import jax.numpy as jnp
+
 batch_size = 10
+ymin = jnp.array([91.93025, 100.43926, 15.655377, 53.970665])
+ymax = jnp.array([7866.401, 4771.8975, 1377.4222, 1086.2181])
 
 def get_system_rollout_config():
     config = Dict()
@@ -13,6 +16,13 @@ def get_system_rollout_config():
     config.n_system_steps = 20000
     return config
 
+def get_rollout_statistics_encoder_config():
+    config = Dict()
+    config.is_stable_std_epsilon = 1e-3*(ymax-ymin)
+    config.is_converging_ratio_threshold = 0.8
+    config.is_periodic_max_frequency_threshold = 40
+    return config
+
 def get_intervention_config():
     config = Dict()
     config.controlled_intervals = [[0, 1e-5]]
@@ -21,8 +31,8 @@ def get_intervention_config():
     config.low = Dict()
     config.high = Dict()
     for y_idx in config.controlled_node_ids:
-        config.low.y[y_idx] = [91.93025, 100.43926, 15.655377, 53.970665][y_idx]
-        config.high.y[y_idx] = [7866.401, 4771.8975, 1377.4222, 1086.2181][y_idx]
+        config.low.y[y_idx] = ymin[y_idx]
+        config.high.y[y_idx] = ymax[y_idx]
 
     return config
 

@@ -17,8 +17,10 @@ if __name__ == "__main__":
 
     # Create System Modules
     system_rollout_config = experiment_config.get_system_rollout_config()
+    system_rollout_config.n_system_steps += 1000
     system_rollout = create_system_rollout_module(system_rollout_config)
-    rollout_statistics_encoder = create_rollout_statistics_encoder_module(system_rollout)
+    rollout_statistics_encoder_config = experiment_config.get_rollout_statistics_encoder_config()
+    rollout_statistics_encoder = create_rollout_statistics_encoder_module(system_rollout, rollout_statistics_encoder_config)
 
     # Create Intervention Modules
     intervention_config = experiment_config.get_intervention_config()
