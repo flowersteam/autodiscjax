@@ -6,8 +6,10 @@ import importlib
 import sbmltoodejax
 
 if __name__ == "__main__":
+    config = experiment_config.ExperimentConfig()
+
     # Create System Modules
-    system_rollout_config = experiment_config.get_system_rollout_config()
+    system_rollout_config = config.get_system_rollout_config()
     ## create sbmltoodejax files
     biomodel_xml_body = sbmltoodejax.biomodels_api.get_content_for_model(system_rollout_config.biomodel_id)
     model_data = sbmltoodejax.parse.ParseSBMLFile(biomodel_xml_body)
@@ -15,34 +17,34 @@ if __name__ == "__main__":
     spec = importlib.util.spec_from_file_location("JaxBioModelSpec", system_rollout_config.model_filepath)
     ## create autodiscjax modules
     system_rollout = create_system_rollout_module(system_rollout_config)
-    rollout_statistics_encoder_config = experiment_config.get_rollout_statistics_encoder_config()
+    rollout_statistics_encoder_config = config.get_rollout_statistics_encoder_config()
     rollout_statistics_encoder = create_rollout_statistics_encoder_module(system_rollout, rollout_statistics_encoder_config)
 
     # Create Intervention Modules
-    intervention_config = experiment_config.get_intervention_config()
+    intervention_config = config.get_intervention_config()
     random_intervention_generator, intervention_fn = create_intervention_module(intervention_config)
 
     # Create Perturbation Modules
-    perturbation_config = experiment_config.get_perturbation_config()
+    perturbation_config = config.get_perturbation_config()
     perturbation_generator, perturbation_fn = create_perturbation_module(perturbation_config)
 
     # Create IMGEP modules
     ## Goal Embedding Encoder, Generator and Achievement Loss
-    goal_embedding_encoder_config = experiment_config.get_goal_embedding_encoder_config()
+    goal_embedding_encoder_config = config.get_goal_embedding_encoder_config()
     goal_embedding_encoder = create_goal_embedding_encoder_module(goal_embedding_encoder_config)
-    goal_generator_config = experiment_config.get_goal_generator_config()
+    goal_generator_config = config.get_goal_generator_config()
     goal_generator = create_goal_generator_module(goal_embedding_encoder, goal_generator_config)
-    goal_achievement_loss_config = experiment_config.get_goal_achievement_loss_config()
+    goal_achievement_loss_config = config.get_goal_achievement_loss_config()
     goal_achievement_loss = create_goal_achievement_loss_module(goal_achievement_loss_config)
 
     ## Goal-Conditioned Intervention Selector and Optimizer
-    gc_intervention_selector_config = experiment_config.get_gc_intervention_selector_config()
+    gc_intervention_selector_config = config.get_gc_intervention_selector_config()
     gc_intervention_selector = create_gc_intervention_selector_module(gc_intervention_selector_config)
-    gc_intervention_optimizer_config = experiment_config.get_gc_intervention_optimizer_config()
+    gc_intervention_optimizer_config = config.get_gc_intervention_optimizer_config()
     gc_intervention_optimizer = create_gc_intervention_optimizer_module(random_intervention_generator, gc_intervention_optimizer_config)
 
     # Run IMGEP Pipeline
-    pipeline_config = experiment_config.get_pipeline_config()
+    pipeline_config = config.get_pipeline_config()
 
     ## Run
     log.clear()
