@@ -140,13 +140,15 @@ class SGDOptimizer(BaseOptimizer):
                 params = params.to_dict()
                 grads = grads.to_dict()
 
-            params, optimizer, opt_state = self.update_worker(params, grads, optimizer, opt_state)
+            updated_params, optimizer, opt_state = self.update_worker(params, grads, optimizer, opt_state)
 
             # append worker params and source ids to log
             if isinstance(evaluate_log_data, adx.DictTree):
                 evaluate_log_data.workers_params = params
                 evaluate_log_data.source_workers_ids = jnp.array([0])
             log_data.append(evaluate_log_data)
+
+            params = updated_params
 
         if is_params_dictree:
             params = adx.DictTree(params)
