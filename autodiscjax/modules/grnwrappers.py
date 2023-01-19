@@ -286,42 +286,55 @@ class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
     filter_fn: Callable
     update_fn: Callable
     
-    def __init__(self, y_shape, time_window=jnp.r_[-100:0], is_stable_std_epsilon=1e-2, is_converging_filter_size=50,
-                 is_periodic_max_frequency_threshold=40, deltaT=0.1
+    def __init__(self, y_shape, is_stable_time_window=jnp.r_[-1000:0], is_stable_std_epsilon=1e-3,
+                 is_converging_time_window=jnp.r_[-1000:0], is_converging_ratio_threshold=0.5, is_monotonous_time_window=jnp.r_[-1000:0],
+                 is_periodic_time_window=jnp.r_[-1000:0], is_periodic_max_frequency_threshold=40, is_periodic_deltaT=0.1,
                  ):
-        out_shape = adx.DictTree()
-        out_shape.mean_vals = y_shape[:-1]
-        out_shape.std_vals = y_shape[:-1]
-        out_shape.amplitude_vals = y_shape[:-1]
-        out_shape.max_frequency_vals = y_shape[:-1]
-        out_shape.diff_signs = y_shape[:-1]
-        out_shape.is_stable = y_shape[:-1]
-        out_shape.is_converging = y_shape[:-1]
-        out_shape.is_monotonous = y_shape[:-1]
-        out_shape.is_periodic = y_shape[:-1]
+
+        out_shape, out_dtype = adx.DictTree(), adx.DictTree()
+        out_shape.mean_vals, out_dtype.mean_vals = y_shape[:-1], jnp.float32
+        out_shape.std_vals, out_dtype.std_vals = y_shape[:-1], jnp.float32
+        out_shape.amplitude_vals, out_dtype.amplitude_vals = y_shape[:-1], jnp.float32
+        out_shape.max_frequency_vals, out_dtype.max_frequency_vals = y_shape[:-1], jnp.float32
+        out_shape.diff_signs, out_dtype.diff_signs = y_shape[:-1], jnp.float32
+        out_shape.is_valid, out_dtype.is_valid = y_shape[:-1], jnp.bool_
+        out_shape.is_stable, out_dtype.is_stable = y_shape[:-1], jnp.bool_
+        out_shape.is_converging, out_dtype.is_converging = y_shape[:-1], jnp.bool_
+        out_shape.is_monotonous, out_dtype.is_monotonous = y_shape[:-1], jnp.bool_
+        out_shape.is_periodic, out_dtype.is_periodic = y_shape[:-1], jnp.bool_
         
         out_treedef = jtu.tree_structure(out_shape, is_leaf=lambda node: isinstance(node, tuple))
-        
-        out_dtype = out_treedef.unflatten([jnp.float32, jnp.float32, jnp.float32, jnp.float32, jnp.float32, jnp.bool_, jnp.bool_, jnp.bool_, jnp.bool_])
-        
+
         super().__init__(out_treedef=out_treedef, out_shape=out_shape, out_dtype=out_dtype)
 
         self.filter_fn = jtu.Partial(lambda system_outputs: system_outputs.ys)
-        self.update_fn = jtu.Partial(self.calc_statistics, time_window=time_window,
-                            is_stable_std_epsilon=is_stable_std_epsilon,
-                            is_converging_filter_size=is_converging_filter_size,
-                            is_periodic_max_frequency_threshold=is_periodic_max_frequency_threshold, deltaT=deltaT)
+        self.update_fn = jtu.Partial(self.calc_statistics, is_stable_time_window=is_stable_time_window, is_stable_std_epsilon=is_stable_std_epsilon,
+                                     is_converging_time_window=is_converging_time_window, is_converging_ratio_threshold=is_converging_ratio_threshold,
+                                     is_monotonous_time_window=is_monotonous_time_window, is_periodic_time_window=is_periodic_time_window,
+                                     is_periodic_max_frequency_threshold=is_periodic_max_frequency_threshold, is_periodic_deltaT=is_periodic_deltaT)
 
-    def calc_statistics(self, y, time_window, 
-                        is_stable_std_epsilon, is_converging_filter_size, 
-                        is_periodic_max_frequency_threshold, deltaT):
-        is_stable, mean_vals, std_vals = timeseries.is_stable(y, time_window, is_stable_std_epsilon)
-        is_converging = timeseries.is_converging(y, time_window, is_converging_filter_size)
-        is_monotonous, diff_signs = timeseries.is_monotonous(y, time_window)
-        is_periodic, _, amplitude_vals, max_frequency_vals = timeseries.is_periodic(y, time_window, deltaT, is_periodic_max_frequency_threshold)
+    def calc_statistics(self, y, is_stable_time_window, is_stable_std_epsilon, is_converging_time_window, is_converging_ratio_threshold,
+                        is_monotonous_time_window, is_periodic_time_window, is_periodic_max_frequency_threshold, is_periodic_deltaT):
+
+        is_valid = ~(jnp.isnan(y).any(-1))
+        is_stable, mean_vals, std_vals = timeseries.is_stable(y, time_window=is_stable_time_window, std_epsilon=is_stable_std_epsilon)
+        is_converging = timeseries.is_converging(y, time_window=is_converging_time_window, ratio_threshold=is_converging_ratio_threshold)
+        is_monotonous, diff_signs = timeseries.is_monotonous(y, time_window=is_monotonous_time_window)
+        is_periodic, _, amplitude_vals, max_frequency_vals = timeseries.is_periodic(y, time_window=is_periodic_time_window, deltaT=is_periodic_deltaT,
+                                                                                    max_frequency_threshold=is_periodic_max_frequency_threshold)
+
+        stats = adx.DictTree()
+        stats.mean_vals = mean_vals
+        stats.std_vals = std_vals
+        stats.amplitude_vals = amplitude_vals
+        stats.max_frequency_vals = max_frequency_vals
+        stats.diff_signs = diff_signs
+        stats.is_valid = is_valid
+        stats.is_stable = is_stable
+        stats.is_converging = is_converging
+        stats.is_monotonous = is_monotonous
+        stats.is_periodic = is_periodic
         
-        
-        stats = self.out_treedef.unflatten([mean_vals, std_vals, amplitude_vals, max_frequency_vals, diff_signs, is_stable, is_converging, is_monotonous, is_periodic])
         return stats
 
     @eqx.filter_jit

@@ -27,20 +27,26 @@ def is_monotonous(x, time_window=jnp.r_[-1000:0]):
 
 
 @partial(jit, static_argnames=("filter_size"))
-def is_converging(x, time_window=jnp.r_[-1000:0], filter_size=50):
+def is_converging(x, time_window=jnp.r_[-1000:0], phase1_timepoints=(0, 1/4), phase2_timepoints=(3/4, 1), ratio_threshold=0.5):
     """
     x is a signal of shape ...xT
     """
-    diff = jnp.diff(x[..., time_window])
-    def smooth(x):
-        smooth_filter = jnp.ones(filter_size) / filter_size
-        return jnp.convolve(x, smooth_filter, mode='same')
-    offset = filter_size//2+1
-    for _ in range(0, diff.ndim-1):
-        smooth = vmap(smooth)
-    diff_smooth = smooth(diff)[..., offset:-offset]
-    is_diff_monotonous, diff_slope_sign = is_monotonous(jnp.abs(diff_smooth), time_window=jnp.r_[-diff_smooth.shape[-1]:0])
-    is_converging = is_diff_monotonous & (diff_slope_sign <= 0)
+    x = x[..., time_window]
+    n_steps = x.shape[-1]
+
+    phase1_start_idx = int(n_steps * phase1_timepoints[0])
+    phase1_end_idx = int(n_steps * phase1_timepoints[1])
+
+    phase2_start_idx = int(n_steps * phase2_timepoints[0])
+    phase2_end_idx = int(n_steps * phase2_timepoints[1])
+
+    x_phase_1 = x[..., phase1_start_idx:phase1_end_idx]
+    phase1_amplitude = x_phase_1.max(-1) - x_phase_1.min(-1)
+    x_phase_2 = x[..., phase2_start_idx:phase2_end_idx]
+    phase2_amplitude = x_phase_2.max(-1) - x_phase_2.min(-1)
+
+    ratio = phase2_amplitude / phase1_amplitude
+    is_converging = ratio < ratio_threshold
 
     return is_converging
 
