@@ -10,10 +10,7 @@ import jax.tree_util as jtu
 import sbmltoodejax
 
 def create_system_rollout_module(system_rollout_config):
-    biomodel_xml_body = sbmltoodejax.biomodels_api.get_content_for_model(system_rollout_config.biomodel_id)
-    model_data = sbmltoodejax.parse.ParseSBMLFile(biomodel_xml_body)
-    sbmltoodejax.modulegeneration.GenerateModel(model_data, system_rollout_config.biomodel_odejax_filepath)
-    spec = importlib.util.spec_from_file_location("JaxBioModelSpec", system_rollout_config.biomodel_odejax_filepath)
+    spec = importlib.util.spec_from_file_location("JaxBioModelSpec", system_rollout_config.model_filepath)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     grnstep_cls = getattr(module, "ModelStep")
@@ -139,12 +136,12 @@ def create_goal_embedding_encoder_module(goal_embedding_encoder_config):
 
 
 def create_goal_generator_module(goal_embedding_encoder, goal_generator_config):
-    if goal_generator_config.generator_type == "hypercube_sampling":
+    if goal_generator_config.generator_type == "hypercube":
         goal_generator = imgep.HypercubeGoalGenerator(goal_embedding_encoder.out_treedef, goal_embedding_encoder.out_shape, goal_embedding_encoder.out_dtype,
                                                       goal_generator_config.low, goal_generator_config.high,
                                                       goal_generator_config.hypercube_scaling)
 
-    elif goal_generator_config.generator_type == "IMFlow_sampling":
+    elif goal_generator_config.generator_type == "IMFlow":
         goal_generator = imgep.IMFlowGoalGenerator(goal_embedding_encoder.out_treedef, goal_embedding_encoder.out_shape, goal_embedding_encoder.out_dtype,
                                                    goal_generator_config.low, goal_generator_config.high,
                                                    imgep.LearningProgressIM(), goal_generator_config.IM_val_scaling, goal_generator_config.IM_grad_scaling,

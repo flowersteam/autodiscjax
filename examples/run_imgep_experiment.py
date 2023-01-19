@@ -1,13 +1,19 @@
 from autodiscjax.experiment_pipelines import run_imgep_experiment
+from autodiscjax.utils.create_modules import *
 import experiment_config
 import exputils.data.logging as log
-from create_modules import *
-import time
+import importlib
+import sbmltoodejax
 
 if __name__ == "__main__":
-
     # Create System Modules
     system_rollout_config = experiment_config.get_system_rollout_config()
+    ## create sbmltoodejax files
+    biomodel_xml_body = sbmltoodejax.biomodels_api.get_content_for_model(system_rollout_config.biomodel_id)
+    model_data = sbmltoodejax.parse.ParseSBMLFile(biomodel_xml_body)
+    sbmltoodejax.modulegeneration.GenerateModel(model_data, system_rollout_config.model_filepath)
+    spec = importlib.util.spec_from_file_location("JaxBioModelSpec", system_rollout_config.model_filepath)
+    ## create autodiscjax modules
     system_rollout = create_system_rollout_module(system_rollout_config)
     rollout_statistics_encoder_config = experiment_config.get_rollout_statistics_encoder_config()
     rollout_statistics_encoder = create_rollout_statistics_encoder_module(system_rollout, rollout_statistics_encoder_config)

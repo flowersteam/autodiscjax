@@ -8,7 +8,7 @@ ymax = jnp.array([7866.401, 4771.8975, 1377.4222, 1086.2181])
 def get_system_rollout_config():
     config = Dict()
     config.biomodel_id = 29
-    config.biomodel_odejax_filepath = "biomodel_29.py"
+    config.model_filepath = "biomodel_29.py"
     config.atol = 1e-6
     config.rtol = 1e-12
     config.mxstep = 1000
@@ -52,11 +52,11 @@ def get_goal_generator_config():
     config.low = 0.0
     config.high = None
 
-    # config.generator_type = "hypercube_sampling"
+    # config.generator_type = "hypercube"
     # config.hypercube_scaling = 1.3
 
     optimizer_config = get_gc_intervention_optimizer_config()
-    config.generator_type = "IMFlow_sampling"
+    config.generator_type = "IMFlow"
     config.IM_val_scaling = 20.0
     config.IM_grad_scaling = 0.1
     config.random_proba = 0.2

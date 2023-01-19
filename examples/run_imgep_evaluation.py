@@ -1,8 +1,8 @@
 from autodiscjax.experiment_pipelines import run_imgep_evaluation
+from autodiscjax.utils.create_modules import *
 import evaluation_config
 import experiment_config
 import exputils.data.logging as log
-from create_modules import *
 import time
 
 if __name__ == "__main__":
