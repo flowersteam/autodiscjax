@@ -47,6 +47,7 @@ class EAOptimizer(BaseOptimizer):
     def __call__(self, key, params, evaluate_worker_fn):
         update_workers = vmap(self.update_worker, in_axes=(0, 0, None), out_axes=0)
         evaluate_workers = vmap(evaluate_worker_fn, in_axes=(0, 0), out_axes=(0, 0))
+        clamp_workers = vmap(self.clamp, in_axes=0, out_axes=0)
 
         log_data = []
         selected_worker_idx = 0
@@ -58,6 +59,9 @@ class EAOptimizer(BaseOptimizer):
             # Update worker params with random mutations
             key, *subkeys = jrandom.split(key, num=self.n_workers + 1)
             workers_params = update_workers(jnp.array(subkeys), workers_params, optim_step_idx)
+
+            # Clamp params
+            workers_params = clamp_workers(workers_params)
 
             # Evaluate fitness
             key, *subkeys = jrandom.split(key, num=self.n_workers + 1)
