@@ -90,18 +90,15 @@ def run_rs_experiment(jax_platform_name: str, seed: int, n_random_batches: int,
         history = history.update_node("system_output_library", system_outputs, merge_concatenate)
         history = history.update_node("system_rollout_statistics_library", system_rollouts_statistics, merge_concatenate)
 
-        # Save history and modules
-        history.save(os.path.join(save_folder, "experiment_history.pickle"), overwrite=True)
-        if save_modules:
-            eqx.tree_serialise_leaves(os.path.join(save_folder, "random_intervention_generator.eqx"), random_intervention_generator)
-            eqx.tree_serialise_leaves(os.path.join(save_folder, "intervention_fn.eqx"), intervention_fn)
-            eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_generator.eqx"), perturbation_generator)
-            eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_fn.eqx"), perturbation_fn)
-            eqx.tree_serialise_leaves(os.path.join(save_folder, "system_rollout.eqx"), system_rollout)
-            eqx.tree_serialise_leaves(os.path.join(save_folder, "rollout_statistics_encoder.eqx"), rollout_statistics_encoder)
-
-        if logger is not None:
-            logger.save()
+    # Save history and modules
+    history.save(os.path.join(save_folder, "experiment_history.pickle"), overwrite=True)
+    if save_modules:
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "random_intervention_generator.eqx"), random_intervention_generator)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "intervention_fn.eqx"), intervention_fn)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_generator.eqx"), perturbation_generator)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_fn.eqx"), perturbation_fn)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "system_rollout.eqx"), system_rollout)
+        eqx.tree_serialise_leaves(os.path.join(save_folder, "rollout_statistics_encoder.eqx"), rollout_statistics_encoder)
 
     tend = time.time()
     print(tend - tstart)
