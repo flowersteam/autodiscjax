@@ -26,7 +26,7 @@ def is_monotonous(x, time_window=jnp.r_[-1000:0]):
     return is_monotonous, diff_signs
 
 
-@partial(jit, static_argnames=("filter_size"))
+@jit
 def is_converging(x, time_window=jnp.r_[-1000:0], phase1_timepoints=(0, 1/4), phase2_timepoints=(3/4, 1), ratio_threshold=0.5):
     """
     x is a signal of shape ...xT
