@@ -135,14 +135,19 @@ def create_goal_embedding_encoder_module(goal_embedding_encoder_config):
     return goal_embedding_encoder
 
 
-def create_goal_generator_module(goal_embedding_encoder, goal_generator_config):
-    if goal_generator_config.generator_type == "hypercube":
-        goal_generator = imgep.HypercubeGoalGenerator(goal_embedding_encoder.out_treedef, goal_embedding_encoder.out_shape, goal_embedding_encoder.out_dtype,
+def create_goal_generator_module(goal_generator_config):
+    if goal_generator_config.generator_type == "uniform":
+        goal_generator = imgep.UniformGoalGenerator(goal_generator_config.out_treedef,
+                                                      goal_generator_config.out_shape, goal_generator_config.out_dtype,
+                                                      goal_generator_config.low, goal_generator_config.high)
+
+    elif goal_generator_config.generator_type == "hypercube":
+        goal_generator = imgep.HypercubeGoalGenerator(goal_generator_config.out_treedef, goal_generator_config.out_shape, goal_generator_config.out_dtype,
                                                       goal_generator_config.low, goal_generator_config.high,
                                                       goal_generator_config.hypercube_scaling)
 
     elif goal_generator_config.generator_type == "IMFlow":
-        goal_generator = imgep.IMFlowGoalGenerator(goal_embedding_encoder.out_treedef, goal_embedding_encoder.out_shape, goal_embedding_encoder.out_dtype,
+        goal_generator = imgep.IMFlowGoalGenerator(goal_generator_config.out_treedef, goal_generator_config.out_shape, goal_generator_config.out_dtype,
                                                    goal_generator_config.low, goal_generator_config.high,
                                                    imgep.LearningProgressIM(), goal_generator_config.IM_val_scaling, goal_generator_config.IM_grad_scaling,
                                                    goal_generator_config.random_proba, goal_generator_config.flow_noise,
@@ -166,38 +171,43 @@ def create_gc_intervention_selector_module(gc_intervention_selector_config):
     intervention_selector_treedef = jtu.tree_structure(intervention_selector_tree)
     intervention_selector_shape = jtu.tree_map(lambda _: (), intervention_selector_tree)
     intervention_selector_dtype = jtu.tree_map(lambda _: jnp.int32, intervention_selector_tree)
-    gc_intervention_selector = imgep.NearestNeighborInterventionSelector(intervention_selector_treedef,
-                                                                         intervention_selector_shape,
-                                                                         intervention_selector_dtype, gc_intervention_selector_config.k)
+
+    if gc_intervention_selector_config.selector_type == "nearest_neighbor":
+        gc_intervention_selector = imgep.NearestNeighborInterventionSelector(intervention_selector_treedef,
+                                                                             intervention_selector_shape,
+                                                                             intervention_selector_dtype, gc_intervention_selector_config.k)
+    elif gc_intervention_selector_config.selector_type == "random":
+        gc_intervention_selector = imgep.RandomInterventionSelector(intervention_selector_treedef,
+                                                                    intervention_selector_shape,
+                                                                    intervention_selector_dtype)
     return gc_intervention_selector
 
-def create_gc_intervention_optimizer_module(random_intervention_generator, gc_intervention_optimizer_config):
+def create_gc_intervention_optimizer_module(gc_intervention_optimizer_config):
     if gc_intervention_optimizer_config.optimizer_type == "SGD":
-        optimizer = optimizers.SGDOptimizer(random_intervention_generator.out_treedef,
-                                            random_intervention_generator.out_shape,
-                                            random_intervention_generator.out_dtype,
-                                            random_intervention_generator.low,
-                                            random_intervention_generator.high,
+        optimizer = optimizers.SGDOptimizer(gc_intervention_optimizer_config.out_treedef,
+                                            gc_intervention_optimizer_config.out_shape,
+                                            gc_intervention_optimizer_config.out_dtype,
+                                            gc_intervention_optimizer_config.low,
+                                            gc_intervention_optimizer_config.high,
                                             gc_intervention_optimizer_config.n_optim_steps,
                                             gc_intervention_optimizer_config.n_workers,
                                             init_noise_std=jtu.tree_map(lambda low, high: gc_intervention_optimizer_config.init_noise_std*(high-low),
-                                                                       random_intervention_generator.low, random_intervention_generator.high),
+                                                                       gc_intervention_optimizer_config.low, gc_intervention_optimizer_config.high),
                                             lr=jtu.tree_map(lambda low, high: gc_intervention_optimizer_config.lr*(high-low),
-                                                                       random_intervention_generator.low, random_intervention_generator.high)
+                                                                       gc_intervention_optimizer_config.low, gc_intervention_optimizer_config.high)
                                             )
 
 
     elif gc_intervention_optimizer_config.optimizer_type == "EA":
-        optimizer = optimizers.EAOptimizer(random_intervention_generator.out_treedef,
-                                           random_intervention_generator.out_shape,
-                                           random_intervention_generator.out_dtype,
-                                           random_intervention_generator.low,
-                                           random_intervention_generator.high,
+        optimizer = optimizers.EAOptimizer(gc_intervention_optimizer_config.out_treedef,
+                                           gc_intervention_optimizer_config.out_shape,
+                                           gc_intervention_optimizer_config.out_dtype,
+                                           gc_intervention_optimizer_config.low,
+                                           gc_intervention_optimizer_config.high,
                                            gc_intervention_optimizer_config.n_optim_steps,
                                            gc_intervention_optimizer_config.n_workers,
                                            init_noise_std=jtu.tree_map(lambda low, high: gc_intervention_optimizer_config.init_noise_std*(high-low),
-                                                                       random_intervention_generator.low, random_intervention_generator.high)
-
+                                                                       gc_intervention_optimizer_config.low, gc_intervention_optimizer_config.high)
                                            )
 
     else:
