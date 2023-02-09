@@ -68,6 +68,16 @@ class BaseGoalGenerator(BaseGenerator):
     def __call__(self, key, reached_goal_embedding_library, system_rollout_statistics_library=None):
         raise NotImplementedError
 
+class UniformGoalGenerator(BaseGoalGenerator):
+    def __init__(self, out_treedef, out_shape, out_dtype, low, high):
+        assert (low is not None) and (high is not None), "Need to specify low and high value for uniform goal sampling"
+        super().__init__(out_treedef, out_shape, out_dtype, low, high), None
+
+    @jit
+    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library,
+                 system_rollout_statistics_library=None):
+        return uniform(key, self.low, self.high, self.out_treedef, self.out_shape, self.out_dtype), None
+
 class HypercubeGoalGenerator(BaseGoalGenerator):
     hypercube_scaling: float = 1.2
 
@@ -194,6 +204,11 @@ class BaseGCInterventionSelector(adx.Module):
         raise NotImplementedError
 
 
+class RandomInterventionSelector(BaseGCInterventionSelector):
+    @jit
+    def __call__(self, key, target_goals_embeddings, reached_goal_embedding_library, system_rollout_statistics_library):
+        return jrandom.choice(key, jnp.arange(reached_goal_embedding_library.shape[0]), axis=-1), None
+
 class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
     k: int = eqx.static_field()
 
@@ -209,9 +224,9 @@ class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
         reached_goals_flat = jnp.concatenate(reached_goals_flat, axis=-1)
 
         selected_intervention_ids, distances = nearest_neighbors(target_goals_flat, reached_goals_flat, k=self.k)
-        selected_intervention_ids = jrandom.choice(key, selected_intervention_ids, axis=-1)
+        selected_intervention_idx = jrandom.choice(key, selected_intervention_ids, axis=-1)
 
-        return selected_intervention_ids, None
+        return selected_intervention_idx, None
 
 class BaseGoalAchievementLoss(adx.Module):
     @jit
