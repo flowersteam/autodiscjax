@@ -248,7 +248,7 @@ class GRNRollout(BaseSystemRollout):
         if perturbation_fn is None:
             perturbation_fn = NullIntervention()
 
-        rollout_start = time.time()
+        #rollout_start = time.time()
 
         def f(carry, x):
             (key, y_, w_, c_, t_) = carry
@@ -264,15 +264,15 @@ class GRNRollout(BaseSystemRollout):
             key, subkey = jrandom.split(key)
             y, w, c = perturbation_fn(key, y, y_, w, w_, c, c_, t_, perturbation_params)
 
-            return (key, y, w, c, t), (y, w, c, t)
+            return (key, y, w, c, t), (y, w, c, t) #(y,w,c,t) and not (y_,w_c_,t_) because y0=y after first intervention (before set to default)
 
         (key, y, w, c, t), (ys, ws, cs, ts) = lax.scan(f, (key, self.y0, self.w0, self.c, self.t0), jnp.arange(self.n_steps))
         ys = jnp.moveaxis(ys, 0, -1)
         ws = jnp.moveaxis(ws, 0, -1)
         cs = jnp.moveaxis(cs, 0, -1)
 
-        rollout_end = time.time()
-        log_data = adx.DictTree(system_rollout_time=rollout_end-rollout_start)
+        #rollout_end = time.time()
+        #log_data = adx.DictTree(system_rollout_time=rollout_end-rollout_start)
 
         outputs = adx.DictTree()
         outputs.ys = ys
@@ -280,7 +280,7 @@ class GRNRollout(BaseSystemRollout):
         outputs.cs = cs
         outputs.ts = ts
 
-        return outputs, log_data
+        return outputs, None
 
 class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
     filter_fn: Callable
