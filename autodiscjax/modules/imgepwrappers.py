@@ -296,3 +296,11 @@ class BaseRolloutStatisticsEncoder(adx.Module):
     @jit
     def __call__(self, key, system_outputs):
         raise NotImplementedError
+
+
+class NullRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
+    def __init__(self):
+        super().__init__(out_treedef= jtu.tree_structure("placeholder"), out_shape=(0, ), out_dtype=jnp.float32)
+    @jit
+    def __call__(self, key, system_outputs):
+        return jnp.empty((0, )), None
