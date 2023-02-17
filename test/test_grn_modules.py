@@ -100,17 +100,22 @@ def test_wall_intervention():
     system_rollout = load_system(biomodel_id, n_steps)
 
     # Wall perturbation Module
-    n_walls = 3
+    wall_type = "force_field"
+    perturbed_intervals = [[0, n_steps*0.1]]
     perturbed_node_ids = [0, 1]
-    perturbed_intervals = [[0, n_steps]]
-    walls_target_intersection_window = jnp.r_[20:n_steps-20]
-    walls_length_range = [0.1, 0.1]
-    walls_sigma = jnp.array([1e-2, 1e-4])
+    n_walls = 3
+    walls_intersection_window = [[0.1, 0.2], [0.4, 0.5], [0.7, 0.8]]  # in distance travelled from 0 to 1.0, of size n_walls
+    walls_length_range = [[0.1, 0.1]] * n_walls
+    walls_sigma = [1e-2, 1e-4]
+
+    if wall_type == "elastic":
+        collision_fn = jtu.Partial(vmap(wall_elastic_collision, in_axes=(None, None, 0, 0), out_axes=(0, 0)))
+    elif wall_type == "force_field":
+        collision_fn = jtu.Partial(vmap(wall_force_field_collision, in_axes=(None, None, 0, 0), out_axes=(0, 0)))
 
     perturbation_fn = grn.PiecewiseWallCollisionIntervention(
         time_to_interval_fn=grn.TimeToInterval(intervals=perturbed_intervals),
-        #collision_fn=jtu.Partial(vmap(wall_elastic_collision, in_axes=(None, None, 0, 0), out_axes=(0, 0))))
-        collision_fn=jtu.Partial(vmap(jtu.Partial(wall_force_field_collision), in_axes=(None, None, 0, 0), out_axes=(0, 0))))
+        collision_fn=collision_fn)
 
     perturbation_params_tree = DictTree()
     for y_idx in perturbed_node_ids:
@@ -126,7 +131,8 @@ def test_wall_intervention():
     perturbation_generator = grn.WallPerturbationGenerator(perturbation_params_treedef,
                                                            perturbation_params_shape,
                                                            perturbation_params_dtype,
-                                                           walls_target_intersection_window,
+                                                           n_walls,
+                                                           walls_intersection_window,
                                                            walls_length_range,
                                                            walls_sigma)
 

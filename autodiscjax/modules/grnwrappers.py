@@ -52,50 +52,71 @@ class WallPerturbationGenerator(adx.Module):
     out_treedef: out_params.y[idx] = Array for idx in [node1, node2] where wall is defined
     out_shape: Array of shape (..., n_walls, 2, len(time_intervals))
     """
-    walls_target_intersection_window: Array
-    walls_length_range: Array
-    walls_sigma: Array
+    n_walls: int
+    intersection_windows: Array
+    length_ranges: Array
+    sigmas: Array
 
-    def __init__(self, out_treedef, out_shape, out_dtype, walls_target_intersection_window, walls_length_range, walls_sigma):
+    def __init__(self, out_treedef, out_shape, out_dtype, n_walls, intersection_windows, length_ranges, sigmas):
         super().__init__(out_treedef, out_shape, out_dtype)
         assert len(self.out_shape.y.keys()) == 2  # wall is defined on two nodes
 
-        self.walls_target_intersection_window = walls_target_intersection_window
-        self.walls_length_range = jnp.array(walls_length_range)
-        self.walls_sigma = jnp.array(walls_sigma)
+        out_shape = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))[0][0]  # ..., n_walls, 2, len(time_intervals)
+        assert out_shape[-3] == n_walls
+        assert out_shape[-2] == 2
+        assert len(intersection_windows) == n_walls and jnp.array([len(intersection_windows[i]) == 2 for i in range(n_walls)]).all()
+        assert len(length_ranges) == n_walls and jnp.array([len(length_ranges[i]) == 2 for i in range(n_walls)]).all()
+        assert len(sigmas) == 2 and jnp.array([isinstance(sigmas[i], float) for i in range(2)]).all()
 
-    @jit
+        self.n_walls = n_walls
+        self.intersection_windows = intersection_windows
+        self.length_ranges = jnp.array(length_ranges)
+        self.sigmas = jnp.array(sigmas)
+
+    @eqx.filter_jit
     def __call__(self, key, system_outputs_library):
         out_params = jtu.tree_map(lambda shape, dtype: jnp.empty(shape=shape, dtype=dtype), self.out_shape,
                            self.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
         out_shape = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))[0][0] #..., n_walls, 2, len(time_intervals)
-        n_walls = out_shape[-3]
 
-        # sample random wall orientation (50% chance vertical, 50% chance horizontal)
         node_ids = jnp.array(list(out_params.y.keys()))
+        ys = system_outputs_library.ys[..., node_ids, :]
+
+        # sample random wall orientation (50% vertical, 50% horizontal)
+
         key, subkey = jrandom.split(key)
-        target_node_rel_ids = jrandom.choice(subkey, jnp.arange(2), shape=(n_walls, ))
-        target_node_ids = node_ids[target_node_rel_ids]
-        other_node_ids = node_ids[1-target_node_rel_ids]
+        target_node_rel_ids = jrandom.choice(subkey, jnp.arange(2), shape=(self.n_walls, ))
+        other_node_rel_ids = 1-target_node_rel_ids
 
         # sample random wall length
-        key, subkey = jrandom.split(key)
-        walls_length = jrandom.uniform(subkey, shape=(n_walls, ), minval=self.walls_length_range[0], maxval=self.walls_length_range[1])
+        walls_length = []
+        for wall_idx in range(self.n_walls):
+            key, subkey = jrandom.split(key)
+            walls_length.append(jrandom.uniform(subkey, shape=(1, ), minval=self.length_ranges[wall_idx][0], maxval=self.length_ranges[wall_idx][1]))
+        walls_length = jnp.concatenate(walls_length)
 
         # sample random wall position
-        key, subkey = jrandom.split(key)
-        walls_target_intersection_step = jrandom.choice(subkey, self.walls_target_intersection_window, shape=(n_walls, ))
+        distance_travelled = jnp.cumsum(jnp.sqrt(jnp.sum((jnp.diff(ys, axis=-1)/(ys.max(-1) - ys.min(-1))[:, jnp.newaxis])** 2, axis=-2)), axis=-1) # shape (..., n_system_steps)
+        distance_travelled = distance_travelled / distance_travelled.max(-1) # normalize between 0 and 1
+        walls_target_intersection_step = []
+        for wall_idx in range(self.n_walls):
+            intersection_window_step_ids = jnp.where((distance_travelled > self.intersection_windows[wall_idx][0]) &
+                                                     (distance_travelled < self.intersection_windows[wall_idx][1]), size=distance_travelled.shape[-1], fill_value=-1)[0]
+            key, subkey = jrandom.split(key)
+            walls_target_intersection_step.append(jrandom.choice(subkey, intersection_window_step_ids, shape=(1, ),
+                                                                 p=jnp.ones_like(intersection_window_step_ids) * (intersection_window_step_ids>=0)))
+        walls_target_intersection_step = jnp.concatenate(walls_target_intersection_step)
 
-        walls_target_centers = system_outputs_library.ys[..., target_node_ids, walls_target_intersection_step]
-        walls_other_centers = system_outputs_library.ys[..., other_node_ids, walls_target_intersection_step]
-        walls_length = walls_length * (system_outputs_library.ys[..., other_node_ids, :].max(-1) - system_outputs_library.ys[..., other_node_ids, :].min(-1))
+        walls_target_centers = ys[..., target_node_rel_ids, walls_target_intersection_step]
+        walls_other_centers = ys[..., other_node_rel_ids, walls_target_intersection_step]
+        walls_length = walls_length * (ys[..., other_node_rel_ids, :].max(-1) - ys[..., other_node_rel_ids, :].min(-1))
         walls_target = jnp.repeat(jnp.repeat(walls_target_centers[..., jnp.newaxis, jnp.newaxis], out_shape[-2], -2), out_shape[-1], -1) # repeat over wall dims and over time intervals
         walls_other = jnp.stack([walls_other_centers - walls_length / 2., walls_other_centers + walls_length / 2.], axis=-1).reshape(out_shape) * jnp.ones(out_shape)
         for k, v in out_params.y.items():
-            out_params.y[k] = jnp.where((target_node_ids == k)[..., jnp.newaxis, jnp.newaxis], walls_target, walls_other)
+            out_params.y[k] = jnp.where((node_ids[target_node_rel_ids] == k)[..., jnp.newaxis, jnp.newaxis], walls_target, walls_other)
 
-        sigma = self.walls_sigma * jnp.stack([system_outputs_library.ys[..., target_node_ids, :].max(-1) - system_outputs_library.ys[..., target_node_ids, :].min(-1),
-                                                         system_outputs_library.ys[..., other_node_ids, :].max(-1) - system_outputs_library.ys[..., other_node_ids, :].min(-1)],
+        sigma = self.sigmas * jnp.stack([ys[..., target_node_rel_ids, :].max(-1) - ys[..., target_node_rel_ids, :].min(-1),
+                                         ys[..., other_node_rel_ids, :].max(-1) - ys[..., other_node_rel_ids, :].min(-1)],
                                                          axis=-1)
         out_params.sigma = jnp.repeat(sigma[..., jnp.newaxis], out_shape[-1], -1) #repeat over time intervals
 
@@ -340,7 +361,3 @@ class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
     @eqx.filter_jit
     def __call__(self, key, system_outputs):
         return filter_update(system_outputs, self.filter_fn, self.update_fn, self.out_treedef), None
-
-
-if __name__ == "__main__":
-    pass

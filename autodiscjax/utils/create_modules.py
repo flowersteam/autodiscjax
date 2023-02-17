@@ -97,9 +97,9 @@ def create_perturbation_module(perturbation_config):
 
 
         perturbation_generator = grn.NoisePerturbationGenerator(perturbation_params_treedef,
-                                                             perturbation_params_shape,
-                                                             perturbation_params_dtype,
-                                                             std=perturbation_config.std)
+                                                                perturbation_params_shape,
+                                                                perturbation_params_dtype,
+                                                                std=perturbation_config.noise_std)
 
     elif perturbation_config.perturbation_type == "wall":
         if perturbation_config.wall_type == "elastic":
@@ -124,9 +124,9 @@ def create_perturbation_module(perturbation_config):
         perturbation_generator = grn.WallPerturbationGenerator(perturbation_params_treedef,
                                                                perturbation_params_shape,
                                                                perturbation_params_dtype,
-                                                               perturbation_config.walls_target_intersection_window,
-                                                               perturbation_config.walls_length_range,
-                                                               perturbation_config.walls_sigma)
+                                                               intersection_windows=perturbation_config.walls_intersection_window,
+                                                               length_ranges=perturbation_config.walls_length_range,
+                                                               sigmas=perturbation_config.walls_sigma)
 
     elif perturbation_config.perturbation_type == "wall":
         raise NotImplementedError
