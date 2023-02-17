@@ -7,58 +7,70 @@ import importlib
 from jax import vmap
 import jax.numpy as jnp
 import jax.tree_util as jtu
-import sbmltoodejax
 
 def create_system_rollout_module(system_rollout_config):
-    spec = importlib.util.spec_from_file_location("JaxBioModelSpec", system_rollout_config.model_filepath)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    grnstep_cls = getattr(module, "ModelStep")
-    grnstep = grnstep_cls(atol=system_rollout_config.atol,
-                          rtol=system_rollout_config.rtol,
-                          mxstep=system_rollout_config.mxstep)
-    y0 = getattr(module, "y0")
-    w0 = getattr(module, "w0")
-    c = getattr(module, "c")
-    t0 = getattr(module, "t0")
-    system_rollout = grn.GRNRollout(n_steps=system_rollout_config.n_system_steps, y0=y0, w0=w0, c=c, t0=t0,
-                                    deltaT=system_rollout_config.deltaT, grn_step=grnstep)
+    if system_rollout_config.system_type == "grn":
+        spec = importlib.util.spec_from_file_location("JaxBioModelSpec", system_rollout_config.model_filepath)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        grnstep_cls = getattr(module, "ModelStep")
+        grnstep = grnstep_cls(atol=system_rollout_config.atol,
+                              rtol=system_rollout_config.rtol,
+                              mxstep=system_rollout_config.mxstep)
+        y0 = getattr(module, "y0")
+        w0 = getattr(module, "w0")
+        c = getattr(module, "c")
+        t0 = getattr(module, "t0")
+        system_rollout = grn.GRNRollout(n_steps=system_rollout_config.n_system_steps, y0=y0, w0=w0, c=c, t0=t0,
+                                        deltaT=system_rollout_config.deltaT, grn_step=grnstep)
+
+    else:
+        raise ValueError
     return system_rollout
 
-def create_rollout_statistics_encoder_module(system_rollout, rollout_statistics_encoder_config):
-    rollout_statistics_encoder = grn.GRNRolloutStatisticsEncoder(y_shape=system_rollout.out_shape.ys,
-                                                                 is_stable_time_window=jnp.r_[-system_rollout.n_steps//100:0],
-                                                                 is_stable_std_epsilon=rollout_statistics_encoder_config.is_stable_std_epsilon,
-                                                                 is_converging_time_window=jnp.r_[-system_rollout.n_steps//2:0],
-                                                                 is_converging_ratio_threshold=rollout_statistics_encoder_config.is_converging_ratio_threshold,
-                                                                 is_monotonous_time_window=jnp.r_[-system_rollout.n_steps//100:0],
-                                                                 is_periodic_time_window=jnp.r_[-system_rollout.n_steps//2:0],
-                                                                 is_periodic_max_frequency_threshold=rollout_statistics_encoder_config.is_periodic_max_frequency_threshold,
-                                                                 is_periodic_deltaT=system_rollout.deltaT)
+def create_rollout_statistics_encoder_module(rollout_statistics_encoder_config):
+    if rollout_statistics_encoder_config.statistics_type == "null":
+        rollout_statistics_encoder = imgep.NullRolloutStatisticsEncoder()
+
+    elif rollout_statistics_encoder_config.statistics_type == "grn":
+        rollout_statistics_encoder = grn.GRNRolloutStatisticsEncoder(y_shape=rollout_statistics_encoder_config.y_shape,
+                                                                     is_stable_time_window=rollout_statistics_encoder_config.is_stable_time_window,
+                                                                     is_stable_std_epsilon=rollout_statistics_encoder_config.is_stable_std_epsilon,
+                                                                     is_converging_time_window=rollout_statistics_encoder_config.is_converging_time_window,
+                                                                     is_converging_ratio_threshold=rollout_statistics_encoder_config.is_converging_ratio_threshold,
+                                                                     is_monotonous_time_window=rollout_statistics_encoder_config.is_monotonous_time_window,
+                                                                     is_periodic_time_window=rollout_statistics_encoder_config.is_periodic_time_window,
+                                                                     is_periodic_max_frequency_threshold=rollout_statistics_encoder_config.is_periodic_max_frequency_threshold,
+                                                                     is_periodic_deltaT=rollout_statistics_encoder_config.is_periodic_deltaT)
+    else:
+        raise ValueError
     return rollout_statistics_encoder
 
 def create_intervention_module(intervention_config):
-    intervention_fn = grn.PiecewiseSetConstantIntervention(
-        time_to_interval_fn=grn.TimeToInterval(intervals=intervention_config.controlled_intervals))
-    intervention_params_tree = DictTree()
-    for y_idx in intervention_config.controlled_node_ids:
-        intervention_params_tree.y[y_idx] = "placeholder"
-    intervention_params_treedef = jtu.tree_structure(intervention_params_tree)
-    intervention_params_shape = jtu.tree_map(lambda _: (len(intervention_config.controlled_intervals),), intervention_params_tree)
-    intervention_params_dtype = jtu.tree_map(lambda _: jnp.float32, intervention_params_tree)
+    if intervention_config.intervention_type == "set_uniform":
+        intervention_fn = grn.PiecewiseSetConstantIntervention(
+            time_to_interval_fn=grn.TimeToInterval(intervals=intervention_config.controlled_intervals))
+        intervention_params_tree = DictTree()
+        for y_idx in intervention_config.controlled_node_ids:
+            intervention_params_tree.y[y_idx] = "placeholder"
+        intervention_params_treedef = jtu.tree_structure(intervention_params_tree)
+        intervention_params_shape = jtu.tree_map(lambda _: (len(intervention_config.controlled_intervals),), intervention_params_tree)
+        intervention_params_dtype = jtu.tree_map(lambda _: jnp.float32, intervention_params_tree)
 
-    intervention_low = DictTree(intervention_config.low)
-    intervention_low = jtu.tree_map(lambda val, shape, dtype: val * jnp.ones(shape=shape, dtype=dtype),
-                                    intervention_low, intervention_params_shape,
-                                    intervention_params_dtype)
-    intervention_high = DictTree(intervention_config.high)
-    intervention_high = jtu.tree_map(lambda val, shape, dtype: val * jnp.ones(shape=shape, dtype=dtype),
-                                     intervention_high, intervention_params_shape,
-                                     intervention_params_dtype)
-    random_intervention_generator = imgep.UniformRandomGenerator(intervention_params_treedef,
-                                                                 intervention_params_shape,
-                                                                 intervention_params_dtype,
-                                                                 intervention_low, intervention_high)
+        intervention_low = DictTree(intervention_config.low)
+        intervention_low = jtu.tree_map(lambda val, shape, dtype: val * jnp.ones(shape=shape, dtype=dtype),
+                                        intervention_low, intervention_params_shape,
+                                        intervention_params_dtype)
+        intervention_high = DictTree(intervention_config.high)
+        intervention_high = jtu.tree_map(lambda val, shape, dtype: val * jnp.ones(shape=shape, dtype=dtype),
+                                         intervention_high, intervention_params_shape,
+                                         intervention_params_dtype)
+        random_intervention_generator = imgep.UniformRandomGenerator(intervention_params_treedef,
+                                                                     intervention_params_shape,
+                                                                     intervention_params_dtype,
+                                                                     intervention_low, intervention_high)
+    else:
+        raise ValueError
     return random_intervention_generator, intervention_fn
 
 def create_perturbation_module(perturbation_config):
@@ -125,13 +137,13 @@ def create_perturbation_module(perturbation_config):
     return perturbation_generator, perturbation_fn
 
 def create_goal_embedding_encoder_module(goal_embedding_encoder_config):
-    goal_embedding_tree = "placeholder"
-    goal_embedding_treedef = jtu.tree_structure(goal_embedding_tree)
-    goal_embedding_shape = jtu.tree_map(lambda _: (len(goal_embedding_encoder_config.observed_node_ids),), goal_embedding_tree)
-    goal_embedding_dtype = jtu.tree_map(lambda _: jnp.float32, goal_embedding_tree)
-    goal_filter_fn = jtu.Partial(lambda system_outputs: system_outputs.ys[..., goal_embedding_encoder_config.observed_node_ids, -1])
-    goal_embedding_encoder = imgep.FilterGoalEmbeddingEncoder(goal_embedding_treedef, goal_embedding_shape,
-                                                              goal_embedding_dtype, goal_filter_fn)
+    if goal_embedding_encoder_config.encoder_type == "filter":
+        goal_embedding_encoder = imgep.FilterGoalEmbeddingEncoder(goal_embedding_encoder_config.out_treedef, goal_embedding_encoder_config.out_shape,
+                                                                  goal_embedding_encoder_config.out_dtype, goal_embedding_encoder_config.filter_fn)
+
+    else:
+        raise ValueError
+
     return goal_embedding_encoder
 
 
@@ -159,11 +171,15 @@ def create_goal_generator_module(goal_generator_config):
 
 
 def create_goal_achievement_loss_module(goal_achievement_loss_config):
-    gc_loss_tree = "placeholder"
-    gc_loss_treedef = jtu.tree_structure(gc_loss_tree)
-    gc_loss_shape = jtu.tree_map(lambda _: (), gc_loss_tree)
-    gc_loss_dtype = jtu.tree_map(lambda _: jnp.float32, gc_loss_tree)
-    goal_achievement_loss = imgep.L2GoalAchievementLoss(gc_loss_treedef, gc_loss_shape, gc_loss_dtype)
+    if goal_achievement_loss_config.loss_type == "L2":
+        gc_loss_tree = "placeholder"
+        gc_loss_treedef = jtu.tree_structure(gc_loss_tree)
+        gc_loss_shape = jtu.tree_map(lambda _: (), gc_loss_tree)
+        gc_loss_dtype = jtu.tree_map(lambda _: jnp.float32, gc_loss_tree)
+        goal_achievement_loss = imgep.L2GoalAchievementLoss(gc_loss_treedef, gc_loss_shape, gc_loss_dtype)
+
+    else:
+        raise ValueError
     return goal_achievement_loss
 
 def create_gc_intervention_selector_module(gc_intervention_selector_config):
@@ -180,6 +196,9 @@ def create_gc_intervention_selector_module(gc_intervention_selector_config):
         gc_intervention_selector = imgep.RandomInterventionSelector(intervention_selector_treedef,
                                                                     intervention_selector_shape,
                                                                     intervention_selector_dtype)
+
+    else:
+        raise ValueError
     return gc_intervention_selector
 
 def create_gc_intervention_optimizer_module(gc_intervention_optimizer_config):
@@ -191,10 +210,8 @@ def create_gc_intervention_optimizer_module(gc_intervention_optimizer_config):
                                             gc_intervention_optimizer_config.high,
                                             gc_intervention_optimizer_config.n_optim_steps,
                                             gc_intervention_optimizer_config.n_workers,
-                                            init_noise_std=jtu.tree_map(lambda low, high: gc_intervention_optimizer_config.init_noise_std*(high-low),
-                                                                       gc_intervention_optimizer_config.low, gc_intervention_optimizer_config.high),
-                                            lr=jtu.tree_map(lambda low, high: gc_intervention_optimizer_config.lr*(high-low),
-                                                                       gc_intervention_optimizer_config.low, gc_intervention_optimizer_config.high)
+                                            init_noise_std=gc_intervention_optimizer_config.init_noise_std,
+                                            lr=gc_intervention_optimizer_config.lr,
                                             )
 
 
@@ -206,8 +223,7 @@ def create_gc_intervention_optimizer_module(gc_intervention_optimizer_config):
                                            gc_intervention_optimizer_config.high,
                                            gc_intervention_optimizer_config.n_optim_steps,
                                            gc_intervention_optimizer_config.n_workers,
-                                           init_noise_std=jtu.tree_map(lambda low, high: gc_intervention_optimizer_config.init_noise_std*(high-low),
-                                                                       gc_intervention_optimizer_config.low, gc_intervention_optimizer_config.high)
+                                           init_noise_std=gc_intervention_optimizer_config.init_noise_std
                                            )
 
     else:
