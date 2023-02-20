@@ -47,6 +47,38 @@ class NoisePerturbationGenerator(adx.Module):
 
         return self.normal_fn(key, std=std), None
 
+
+class PushPerturbationGenerator(adx.Module):
+    """
+    out_treedef: out_params.y[idx] = Array for idx in perturbed node ids
+    out_shape: Array of shape (batch_size, len(time_intervals))
+    """
+    amplitude: float = 0.1
+
+    def __init__(self, out_treedef, out_shape, out_dtype, amplitude):
+        super().__init__(out_treedef, out_shape, out_dtype)
+        self.amplitude = amplitude
+
+    @eqx.filter_jit
+    def __call__(self, key, system_outputs_library):
+
+        amplitude = jtu.tree_map(lambda shape, dtype: self.amplitude*jnp.ones(shape=shape, dtype=dtype), self.out_shape,
+                                 self.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
+        for y_idx, out_shape in self.out_shape.y.items():
+            yranges = (system_outputs_library.ys[..., y_idx, :].max(-1) - system_outputs_library.ys[..., y_idx, :].min(-1))[..., jnp.newaxis] #shape(batch_size, 1)
+            amplitude.y[y_idx] = amplitude.y[y_idx] * yranges
+        for w_idx, out_shape in self.out_shape.w.items():
+            wranges = (system_outputs_library.ws[..., w_idx, :].max(-1) - system_outputs_library.ws[..., w_idx, :].min(-1))[..., jnp.newaxis] #shape(batch_size, 1)
+            amplitude.w[w_idx] = amplitude.w[w_idx] * wranges
+        for c_idx, out_shape in self.out_shape.c.items():
+            amplitude.c[c_idx] = amplitude.c[c_idx] * system_outputs_library.cs[..., c_idx, :].max(-1)
+
+        # sample push = adding (-1, 0, or 1)*amplitude over each perturbation axis
+        key = self.out_treedef.unflatten(jrandom.split(key, self.out_treedef.num_leaves))
+        out_params = jtu.tree_map(lambda node, subkey: jrandom.choice(subkey, jnp.arange(-1,2, dtype=jnp.float32)) * node, amplitude, key)
+
+        return out_params, None
+
 class WallPerturbationGenerator(adx.Module):
     """
     out_treedef: out_params.y[idx] = Array for idx in [node1, node2] where wall is defined

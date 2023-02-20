@@ -83,7 +83,7 @@ def create_perturbation_module(perturbation_config):
 
         perturbation_generator = imgep.EmptyArrayGenerator(perturbation_params_treedef, perturbation_params_shape, perturbation_params_dtype)
 
-    elif perturbation_config.perturbation_type == "add":
+    elif perturbation_config.perturbation_type in ["noise", "push"]:
         perturbation_fn = grn.PiecewiseAddConstantIntervention(
             time_to_interval_fn=grn.TimeToInterval(intervals=perturbation_config.perturbed_intervals))
 
@@ -95,11 +95,17 @@ def create_perturbation_module(perturbation_config):
                                                  perturbation_params_tree)
         perturbation_params_dtype = jtu.tree_map(lambda _: jnp.float32, perturbation_params_tree)
 
+        if perturbation_config.perturbation_type == "noise":
+            perturbation_generator = grn.NoisePerturbationGenerator(perturbation_params_treedef,
+                                                                    perturbation_params_shape,
+                                                                    perturbation_params_dtype,
+                                                                    std=perturbation_config.std)
 
-        perturbation_generator = grn.NoisePerturbationGenerator(perturbation_params_treedef,
-                                                                perturbation_params_shape,
-                                                                perturbation_params_dtype,
-                                                                std=perturbation_config.noise_std)
+        elif perturbation_config.perturbation_type == "push":
+            perturbation_generator = grn.PushPerturbationGenerator(perturbation_params_treedef,
+                                                                    perturbation_params_shape,
+                                                                    perturbation_params_dtype,
+                                                                    amplitude=perturbation_config.amplitude)
 
     elif perturbation_config.perturbation_type == "wall":
         if perturbation_config.wall_type == "elastic":
@@ -124,6 +130,7 @@ def create_perturbation_module(perturbation_config):
         perturbation_generator = grn.WallPerturbationGenerator(perturbation_params_treedef,
                                                                perturbation_params_shape,
                                                                perturbation_params_dtype,
+                                                               n_walls=perturbation_config.n_walls,
                                                                intersection_windows=perturbation_config.walls_intersection_window,
                                                                length_ranges=perturbation_config.walls_length_range,
                                                                sigmas=perturbation_config.walls_sigma)

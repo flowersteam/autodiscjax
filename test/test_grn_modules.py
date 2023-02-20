@@ -29,7 +29,7 @@ def load_system(model_idx, n_steps):
                                     deltaT=0.1, grn_step=grnstep)
     return system_rollout
 
-def test_noise_intervention():
+def test_noise_perturbation():
     key = jrandom.PRNGKey(0)
 
     # Load the system
@@ -37,15 +37,11 @@ def test_noise_intervention():
     n_steps = 2000
     system_rollout = load_system(biomodel_id, n_steps)
 
-    for variant in ["push_y", "push_w", "push_c", "noise_y", "noise_w", "noise_c"]:
+    for variant in ["noise_y", "noise_w", "noise_c"]:
         perturbed_intervals = []
-        if "noise" in variant:
-            for t_idx in range(5, int(n_steps*0.1/2), 5):
-                perturbed_intervals.append([t_idx, t_idx+0.1])
-            std = 0.05
-        elif "push" in variant:
-            perturbed_intervals.append([int(n_steps*0.1/2), int(n_steps*0.1/2)+0.1])
-            std = 0.2
+        for t_idx in range(5, int(n_steps*0.1/2), 5):
+            perturbed_intervals.append([t_idx-0.1/2, t_idx+0.1/2])
+        std = 0.05
 
         perturbation_fn = grn.PiecewiseAddConstantIntervention(
             time_to_interval_fn=grn.TimeToInterval(intervals=perturbed_intervals))
@@ -91,7 +87,67 @@ def test_noise_intervention():
         plt.suptitle(variant)
         plt.show()
 
-def test_wall_intervention():
+
+def test_push_perturbation():
+    key = jrandom.PRNGKey(0)
+
+    # Load the system
+    biomodel_id = 29
+    n_steps = 2000
+    system_rollout = load_system(biomodel_id, n_steps)
+
+    for variant in ["push_y", "push_w", "push_c"]:
+        perturbed_intervals = []
+        perturbed_intervals.append([int(n_steps * 0.1 / 2)-0.1/2, int(n_steps * 0.1 / 2)+0.1/2])
+        amplitude = 0.2
+
+        perturbation_fn = grn.PiecewiseAddConstantIntervention(
+            time_to_interval_fn=grn.TimeToInterval(intervals=perturbed_intervals))
+
+        perturbation_params_tree = DictTree()
+        for var_idx in range(system_rollout.out_shape[variant[-1] + "s"][0]):
+            perturbation_params_tree[variant[-1]][var_idx] = "placeholder"
+        perturbation_params_treedef = jtu.tree_structure(perturbation_params_tree)
+        perturbation_params_shape = jtu.tree_map(lambda _: (len(perturbed_intervals),),
+                                                 perturbation_params_tree)
+        perturbation_params_dtype = jtu.tree_map(lambda _: jnp.float32, perturbation_params_tree)
+
+        perturbation_generator = grn.PushPerturbationGenerator(perturbation_params_treedef,
+                                                                perturbation_params_shape,
+                                                                perturbation_params_dtype,
+                                                                amplitude=amplitude)
+
+        # Batch modules
+        batched_perturbation_generator = vmap(perturbation_generator, in_axes=(0, 0), out_axes=0)
+        batched_system_rollout = vmap(system_rollout, in_axes=(0, None, 0, None, 0), out_axes=0)
+
+        # Rollouts with default trajectory
+        batch_size = 3
+        key, *subkeys = jrandom.split(key, num=batch_size + 1)
+        default_system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), None, None, None, None)
+
+        # Sample perturbation params
+        key, *subkeys = jrandom.split(key, num=batch_size + 1)
+        perturbation_params, log_data = batched_perturbation_generator(jnp.array(subkeys), default_system_outputs)
+
+        # Evaluation Rollout with perturbations
+        key, *subkeys = jrandom.split(key, num=batch_size + 1)
+        after_system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), None, None, perturbation_fn,
+                                                                perturbation_params)
+
+        # Show results
+        fig, ax = plt.subplots(1, batch_size)
+        for sample_idx in range(batch_size):
+            for y_idx in range(system_rollout.out_shape.ys[0]):
+                ax[sample_idx].scatter(default_system_outputs.ts[sample_idx],
+                                       default_system_outputs.ys[sample_idx, y_idx], s=2, label="before")
+                ax[sample_idx].scatter(after_system_outputs.ts[sample_idx], after_system_outputs.ys[sample_idx, y_idx],
+                                       s=2, label="after")
+        plt.legend()
+        plt.suptitle(variant)
+        plt.show()
+
+def test_wall_perturbation():
     key = jrandom.PRNGKey(0)
 
     # Load the system
