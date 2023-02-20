@@ -1,3 +1,3 @@
 from autodiscjax.experiment_pipelines.rs_experiment_pipeline import run_rs_experiment
 from autodiscjax.experiment_pipelines.imgep_experiment_pipeline import run_imgep_experiment
-from autodiscjax.experiment_pipelines.imgep_evaluation_pipeline import run_imgep_evaluation
+from autodiscjax.experiment_pipelines.robustness_evaluation_pipeline import run_robustness_tests

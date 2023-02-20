@@ -9,7 +9,7 @@ import jax.random as jrandom
 import jax.tree_util as jtu
 import os
 
-def run_imgep_evaluation(jax_platform_name: str, seed: int, n_perturbations: int, save_folder: str,
+def run_robustness_tests(jax_platform_name: str, seed: int, n_perturbations: int, save_folder: str,
                          experiment_system_output_library: adx.DictTree, experiment_intervention_params_library: adx.DictTree, intervention_fn: eqx.Module,
                          perturbation_generator: eqx.Module, perturbation_fn: eqx.Module,
                          system_rollout: eqx.Module, rollout_statistics_encoder: eqx.Module,
