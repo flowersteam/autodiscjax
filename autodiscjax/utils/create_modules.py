@@ -105,7 +105,7 @@ def create_perturbation_module(perturbation_config):
             perturbation_generator = grn.PushPerturbationGenerator(perturbation_params_treedef,
                                                                     perturbation_params_shape,
                                                                     perturbation_params_dtype,
-                                                                    amplitude=perturbation_config.amplitude)
+                                                                    magnitude=perturbation_config.magnitude)
 
     elif perturbation_config.perturbation_type == "wall":
         if perturbation_config.wall_type == "elastic":

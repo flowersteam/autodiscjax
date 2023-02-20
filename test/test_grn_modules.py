@@ -99,7 +99,7 @@ def test_push_perturbation():
     for variant in ["push_y", "push_w", "push_c"]:
         perturbed_intervals = []
         perturbed_intervals.append([int(n_steps * 0.1 / 2)-0.1/2, int(n_steps * 0.1 / 2)+0.1/2])
-        amplitude = 0.2
+        magnitude = 0.2
 
         perturbation_fn = grn.PiecewiseAddConstantIntervention(
             time_to_interval_fn=grn.TimeToInterval(intervals=perturbed_intervals))
@@ -115,7 +115,7 @@ def test_push_perturbation():
         perturbation_generator = grn.PushPerturbationGenerator(perturbation_params_treedef,
                                                                 perturbation_params_shape,
                                                                 perturbation_params_dtype,
-                                                                amplitude=amplitude)
+                                                                magnitude=magnitude)
 
         # Batch modules
         batched_perturbation_generator = vmap(perturbation_generator, in_axes=(0, 0), out_axes=0)
