@@ -8,12 +8,13 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
 import os
+import time
 
 def run_robustness_tests(jax_platform_name: str, seed: int, n_perturbations: int, save_folder: str,
                          experiment_system_output_library: adx.DictTree, experiment_intervention_params_library: adx.DictTree, intervention_fn: eqx.Module,
                          perturbation_generator: eqx.Module, perturbation_fn: eqx.Module,
                          system_rollout: eqx.Module, rollout_statistics_encoder: eqx.Module,
-                         out_sanity_check=True, save_modules=False):
+                         out_sanity_check=True, save_modules=False, logger=None):
     
     # Set platform device
     jax.config.update("jax_platform_name", jax_platform_name)
@@ -39,13 +40,15 @@ def run_robustness_tests(jax_platform_name: str, seed: int, n_perturbations: int
     batched_rollout_statistics_encoder = vmap(rollout_statistics_encoder, in_axes=(0, 0), out_axes=0)
 
     # Run Evaluation
+    tstart = time.time()
     for perturbation_idx in range(n_perturbations):
 
         # generate perturbation
         print("Generate the perturbation")
         key, *subkeys = jrandom.split(key, num=batch_size+1)
         perturbations_params, log_data = batched_perturbation_generator(jnp.array(subkeys), experiment_system_output_library)
-        append_to_log(log_data)
+        if logger is not None:
+            append_to_log(log_data)
         if out_sanity_check:
             vmap(perturbation_generator.out_sanity_check)(perturbations_params)
 
@@ -53,7 +56,8 @@ def run_robustness_tests(jax_platform_name: str, seed: int, n_perturbations: int
         print("Rollout the system")
         key, *subkeys = jrandom.split(key, num=batch_size+1)
         system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), intervention_fn, experiment_intervention_params_library, perturbation_fn, perturbations_params)
-        append_to_log(log_data)
+        if logger is not None:
+            append_to_log(log_data)
         if out_sanity_check:
             vmap(system_rollout.out_sanity_check)(system_outputs)
 
@@ -61,10 +65,10 @@ def run_robustness_tests(jax_platform_name: str, seed: int, n_perturbations: int
         print("Encode the rollout statistics")
         key, *subkeys = jrandom.split(key, num=batch_size+1)
         system_rollouts_statistics, log_data = batched_rollout_statistics_encoder(jnp.array(subkeys), system_outputs)
-        append_to_log(log_data)
+        if logger is not None:
+            append_to_log(log_data)
         if out_sanity_check:
             vmap(rollout_statistics_encoder.out_sanity_check)(system_rollouts_statistics)
-
 
         # Append to history
         perturbations_params = jtu.tree_map(lambda val: val[:, jnp.newaxis], perturbations_params)
@@ -80,3 +84,10 @@ def run_robustness_tests(jax_platform_name: str, seed: int, n_perturbations: int
     if save_modules:
         eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_generator.eqx"), perturbation_generator)
         eqx.tree_serialise_leaves(os.path.join(save_folder, "perturbation_fn.eqx"), perturbation_fn)
+
+    tend = time.time()
+    if logger is not None:
+        print("Save logger")
+        logger.add_value("experiment_time", tend - tstart)
+        logger.save()
+    print(f"Total time : {tend - tstart}")
