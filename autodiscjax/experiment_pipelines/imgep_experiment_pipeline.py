@@ -131,7 +131,7 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
     batched_rollout_statistics_encoder = vmap(rollout_statistics_encoder, in_axes=(0, 0), out_axes=(0, None))
     batched_goal_generator = vmap(goal_generator, in_axes=(0, None, None, None), out_axes=(0, None))
     batched_gc_intervention_selector = vmap(gc_intervention_selector, in_axes=(0, 0, None, None), out_axes=(0, None))
-    batched_gc_intervention_optimizer = vmap(partial_gc_intervention_optimizer, in_axes=(0, 0, 0), out_axes=(0, 0))
+    batched_gc_intervention_optimizer = vmap(partial_gc_intervention_optimizer, in_axes=(0, 0, 0, None), out_axes=(0, 0))
     batched_goal_embedding_encoder = vmap(goal_embedding_encoder, in_axes=(0, 0), out_axes=(0, None))
     batched_goal_achievement_loss = vmap(goal_achievement_loss, in_axes=(0, 0, 0), out_axes=(0, None))
 
@@ -247,7 +247,7 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         # goal-conditioned optimization of source intervention
         print("Optimize the selected intervention")
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
-        interventions_params, log_data = batched_gc_intervention_optimizer(jnp.array(subkeys), interventions_params, target_goals_embeddings)
+        interventions_params, log_data = batched_gc_intervention_optimizer(jnp.array(subkeys), interventions_params, target_goals_embeddings, history.reached_goal_embedding_library)
         if out_sanity_check:
             vmap(gc_intervention_optimizer.out_sanity_check)(interventions_params)
 

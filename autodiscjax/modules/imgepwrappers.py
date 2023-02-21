@@ -223,6 +223,12 @@ class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
         reached_goals_flat, reached_goals_treedef = jtu.tree_flatten(reached_goal_embedding_library)
         reached_goals_flat = jnp.concatenate(reached_goals_flat, axis=-1)
 
+        # normalize goals
+        reached_goals_low = jnp.nanmin(reached_goals_flat, 0)
+        reached_goals_high = jnp.nanmax(reached_goals_flat, 0)
+        target_goals_flat = target_goals_flat / (reached_goals_high-reached_goals_low)
+        reached_goals_flat = reached_goals_flat / (reached_goals_high-reached_goals_low)
+        
         selected_intervention_ids, distances = nearest_neighbors(target_goals_flat, reached_goals_flat, k=self.k)
         selected_intervention_idx = jrandom.choice(key, selected_intervention_ids, axis=-1)
 
@@ -246,7 +252,8 @@ class BaseGCInterventionOptimizer(adx.Module):
         super().__init__(optimizer.out_treedef, optimizer.out_shape, optimizer.out_dtype)
         self.optimizer = optimizer
 
-    def __call__(self, key, intervention_params, target_goal_embedding, perturbation_generator, perturbation_fn, intervention_fn, system_rollout, goal_embedding_encoder, goal_achievement_loss, rollout_statistics_encoder):
+    def __call__(self, key, intervention_params, target_goal_embedding, reached_goal_embedding_library,
+                 perturbation_generator, perturbation_fn, intervention_fn, system_rollout, goal_embedding_encoder, goal_achievement_loss, rollout_statistics_encoder):
 
         def evaluate_worker_fn(key, intervention_params):
 
@@ -264,8 +271,14 @@ class BaseGCInterventionOptimizer(adx.Module):
             reached_goal_embedding, goal_embedding_encoder_log_data = goal_embedding_encoder(subkey, system_output)
 
             # compute goal-conditionned loss
+            # normalize goals before computing distance
+            reached_goals_low = jtu.tree_map(lambda node: jnp.nanmin(node, 0), reached_goal_embedding_library)
+            reached_goals_high = jtu.tree_map(lambda node: jnp.nanmax(node, 0), reached_goal_embedding_library)
+            
             key, subkey = jrandom.split(key)
-            gc_loss, goal_achievement_loss_log_data = goal_achievement_loss(subkey, reached_goal_embedding, target_goal_embedding)
+            gc_loss, goal_achievement_loss_log_data = goal_achievement_loss(subkey, 
+                                                                            jtu.tree_map(lambda node, low, high: node/(high-low), reached_goal_embedding, reached_goals_low, reached_goals_high),
+                                                                            jtu.tree_map(lambda node, low, high: node/(high-low), target_goal_embedding, reached_goals_low, reached_goals_high))
 
             # represent outputs -> statistics
             system_rollout_statistics, rollout_statistics_encoder_log_data = rollout_statistics_encoder(subkey,
