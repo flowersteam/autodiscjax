@@ -1,4 +1,4 @@
-from autodiscjax.experiment_pipelines import run_imgep_evaluation
+from autodiscjax.experiment_pipelines import run_robustness_tests
 from autodiscjax.utils.create_modules import *
 import evaluation_config
 import experiment_config
@@ -23,10 +23,10 @@ if __name__ == "__main__":
     system_rollout_config.n_system_steps += 5000
     system_rollout = create_system_rollout_module(system_rollout_config)
     rollout_statistics_encoder_config = config.get_rollout_statistics_encoder_config()
-    rollout_statistics_encoder = create_rollout_statistics_encoder_module(system_rollout, rollout_statistics_encoder_config)
+    rollout_statistics_encoder = create_rollout_statistics_encoder_module(rollout_statistics_encoder_config)
 
     # Create Intervention Modules
-    intervention_config = config.get_intervention_config()
+    intervention_config = config.get_random_intervention_generator_config()
     _, intervention_fn = create_intervention_module(intervention_config)
 
     # Create Perturbation Modules
@@ -38,12 +38,12 @@ if __name__ == "__main__":
     log.clear()
     log.set_directory(pipeline_config.evaluation_logging_save_folder)
     tstart = time.time()
-    run_imgep_evaluation(pipeline_config.jax_platform_name, pipeline_config.seed,
+    run_robustness_tests(pipeline_config.jax_platform_name, pipeline_config.seed,
                          pipeline_config.n_perturbations, pipeline_config.evaluation_data_save_folder,
                          experiment_system_output_library, experiment_intervention_params_library, intervention_fn,
                          perturbation_generator, perturbation_fn,
                          system_rollout, rollout_statistics_encoder,
-                         out_sanity_check=True, save_modules=False)
+                         out_sanity_check=True, save_modules=False, logger=log)
     tend = time.time()
     print(tend - tstart)
     log.add_value("evaluation_time", tend - tstart)

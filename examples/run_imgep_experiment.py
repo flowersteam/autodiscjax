@@ -11,17 +11,17 @@ if __name__ == "__main__":
     # Create System Modules
     system_rollout_config = config.get_system_rollout_config()
     ## create sbmltoodejax files
-    biomodel_xml_body = sbmltoodejax.biomodels_api.get_content_for_model(system_rollout_config.biomodel_id)
+    biomodel_xml_body = sbmltoodejax.biomodels_api.get_content_for_model(config.biomodel_id)
     model_data = sbmltoodejax.parse.ParseSBMLFile(biomodel_xml_body)
     sbmltoodejax.modulegeneration.GenerateModel(model_data, system_rollout_config.model_filepath)
     spec = importlib.util.spec_from_file_location("JaxBioModelSpec", system_rollout_config.model_filepath)
     ## create autodiscjax modules
     system_rollout = create_system_rollout_module(system_rollout_config)
     rollout_statistics_encoder_config = config.get_rollout_statistics_encoder_config()
-    rollout_statistics_encoder = create_rollout_statistics_encoder_module(system_rollout, rollout_statistics_encoder_config)
+    rollout_statistics_encoder = create_rollout_statistics_encoder_module(rollout_statistics_encoder_config)
 
     # Create Intervention Modules
-    intervention_config = config.get_intervention_config()
+    intervention_config = config.get_random_intervention_generator_config()
     random_intervention_generator, intervention_fn = create_intervention_module(intervention_config)
 
     # Create Perturbation Modules
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     goal_embedding_encoder_config = config.get_goal_embedding_encoder_config()
     goal_embedding_encoder = create_goal_embedding_encoder_module(goal_embedding_encoder_config)
     goal_generator_config = config.get_goal_generator_config()
-    goal_generator = create_goal_generator_module(goal_embedding_encoder, goal_generator_config)
+    goal_generator = create_goal_generator_module(goal_generator_config)
     goal_achievement_loss_config = config.get_goal_achievement_loss_config()
     goal_achievement_loss = create_goal_achievement_loss_module(goal_achievement_loss_config)
 
@@ -41,7 +41,7 @@ if __name__ == "__main__":
     gc_intervention_selector_config = config.get_gc_intervention_selector_config()
     gc_intervention_selector = create_gc_intervention_selector_module(gc_intervention_selector_config)
     gc_intervention_optimizer_config = config.get_gc_intervention_optimizer_config()
-    gc_intervention_optimizer = create_gc_intervention_optimizer_module(random_intervention_generator, gc_intervention_optimizer_config)
+    gc_intervention_optimizer = create_gc_intervention_optimizer_module(gc_intervention_optimizer_config)
 
     # Run IMGEP Pipeline
     pipeline_config = config.get_pipeline_config()
@@ -57,4 +57,4 @@ if __name__ == "__main__":
                          system_rollout, rollout_statistics_encoder,
                          goal_generator, gc_intervention_selector, gc_intervention_optimizer,
                          goal_embedding_encoder, goal_achievement_loss,
-                         out_sanity_check=False, save_modules=False, logger=log)
+                         out_sanity_check=True, save_modules=False, logger=log)

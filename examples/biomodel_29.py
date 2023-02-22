@@ -18,8 +18,6 @@ c = jnp.array([180.0, 100.0, 410.0, 1.08, 40.0, 0.007, 20.0, 0.008, 300.0, 0.45,
 c_indexes = {'MEK': 0, 'MKP3': 1, 'Km1': 2, 'kcat1': 3, 'Km2': 4, 'kcat2': 5, 'Km3': 6, 'kcat3': 7, 'Km4': 8, 'kcat4': 9, 'Km5': 10, 'kcat5': 11, 'Km6': 12, 'kcat6': 13, 'Km7': 14, 'kcat7': 15, 'Km8': 16, 'cell': 17}
 
 class RateofSpeciesChange(eqx.Module):
-	n_reactions = 7
-	n_raterules = 0
 	stoichiometricMatrix = jnp.array([[-1.0, 0.0, -1.0, 0.0, 0.0, 1.0, 1.0], [1.0, -1.0, 0.0, 0.0, 0.0, 0.0, -1.0], [0.0, 1.0, 0.0, 1.0, -1.0, 0.0, 0.0], [0.0, 0.0, 1.0, -1.0, 1.0, -1.0, 0.0]], dtype=jnp.float32) 
 
 	@jit
@@ -67,8 +65,6 @@ class RateofSpeciesChange(eqx.Module):
 		return c[17] * (c[15] * (c[1]/1.0) * (y[1]/1.0) / c[14] / (1 + (y[2]/1.0) / c[10] + (y[3]/1.0) / c[12] + (y[1]/1.0) / c[14] + (y[0]/1.0) / c[16]))
 
 class AssignmentRule(eqx.Module):
-	n_assignmentrules = 0
-
 	@jit
 	def __call__(self, y, w, c, t):
 		return w
