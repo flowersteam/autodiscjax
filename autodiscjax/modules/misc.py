@@ -12,12 +12,14 @@ class ClampModule(adx.Module):
         super().__init__(out_treedef, out_shape, out_dtype)
 
         if isinstance(low, float):
-            self.low = self.out_treedef.unflatten([low]*self.out_treedef.num_leaves)
+            self.low = jtu.tree_map(lambda val, shape, dtype: val * jnp.ones(shape=shape, dtype=dtype),
+                                        low, self.out_shape, self.out_dtype)
         else:
             self.low = low
 
         if isinstance(high, float):
-            self.high = self.out_treedef.unflatten([high]*self.out_treedef.num_leaves)
+            self.high = jtu.tree_map(lambda val, shape, dtype: val * jnp.ones(shape=shape, dtype=dtype),
+                                        high, self.out_shape, self.out_dtype)
         else:
             self.high = high
 
