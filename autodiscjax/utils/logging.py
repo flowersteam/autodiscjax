@@ -1,11 +1,15 @@
 from autodiscjax import DictTree
-import exputils.data.logging as log
 
-def append_to_log(log_data):
+def append_to_log(logs, log_data):
     if log_data is None:
-        return
+        pass
     elif isinstance(log_data, DictTree):
         for k, v in log_data.items():
-            log.add_value(k, v)
+            if k not in logs:
+                logs[k] = [v]
+            else:
+                logs[k].append(v)
     else:
         raise NotImplementedError
+
+    return logs
