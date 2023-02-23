@@ -14,8 +14,8 @@ setuptools.setup(
     long_description_content_type="text/markdown",
     url='https://github.com/flowersteam/autodiscjax',
     license='MIT',
-    packages = ['autodiscjax'],
-    install_requires=['jax[cpu]', 'optax', 'equinox', 'addict', 'experiment-utils', 'matplotlib'],
+    packages=setuptools.find_packages(exclude=["examples", "test"]),
+    install_requires=['jax[cpu]', 'optax', 'equinox', 'addict'],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
