@@ -23,7 +23,6 @@ class ExperimentConfig:
         config.n_imgep_batches = 4
         config.batch_size = self.batch_size
         config.experiment_data_save_folder = f"experiment_data/"
-        config.experiment_logging_save_folder = f"experiment_logging/"
         return config
 
     def get_system_rollout_config(self):
@@ -106,16 +105,16 @@ class ExperimentConfig:
         config.low = 0.0
         config.high = None
 
-        config.generator_type = "hypercube"
-        config.hypercube_scaling = 1.3
+        # config.generator_type = "hypercube"
+        # config.hypercube_scaling = 1.3
 
-        # config.generator_type = "IMFlow"
-        # optimizer_config = self.get_gc_intervention_optimizer_config()
-        # config.IM_val_scaling = 20.0
-        # config.IM_grad_scaling = 0.1
-        # config.random_proba = 0.2
-        # config.flow_noise = 0.1
-        # config.time_window = jnp.r_[-self.batch_size * optimizer_config.n_optim_steps * optimizer_config.n_workers:0]
+        config.generator_type = "IMFlow"
+        optimizer_config = self.get_gc_intervention_optimizer_config()
+        config.IM_val_scaling = 20.0
+        config.IM_grad_scaling = 0.1
+        config.random_proba = 0.2
+        config.flow_noise = 0.1
+        config.time_window = jnp.r_[-self.batch_size * optimizer_config.n_optim_steps * optimizer_config.n_workers:0]
 
         return config
 

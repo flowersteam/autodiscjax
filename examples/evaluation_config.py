@@ -51,5 +51,4 @@ class EvaluationConfig:
         config.seed = 0
         config.n_perturbations = 5
         config.evaluation_data_save_folder = "evaluation_data/"
-        config.evaluation_logging_save_folder = "evaluation_logging/"
         return config

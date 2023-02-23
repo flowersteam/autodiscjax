@@ -1,7 +1,6 @@
 from autodiscjax.experiment_pipelines import run_imgep_experiment
 from autodiscjax.utils.create_modules import *
 import experiment_config
-import exputils.data.logging as log
 import importlib
 import sbmltoodejax
 
@@ -45,10 +44,6 @@ if __name__ == "__main__":
 
     # Run IMGEP Pipeline
     pipeline_config = config.get_pipeline_config()
-
-    ## Run
-    log.clear()
-    log.set_directory(pipeline_config.experiment_logging_save_folder)
     run_imgep_experiment(pipeline_config.jax_platform_name, pipeline_config.seed,
                          pipeline_config.n_random_batches, pipeline_config.n_imgep_batches, pipeline_config.batch_size,
                          pipeline_config.experiment_data_save_folder,
@@ -57,4 +52,4 @@ if __name__ == "__main__":
                          system_rollout, rollout_statistics_encoder,
                          goal_generator, gc_intervention_selector, gc_intervention_optimizer,
                          goal_embedding_encoder, goal_achievement_loss,
-                         out_sanity_check=True, save_modules=False, logger=log)
+                         out_sanity_check=True, save_modules=False, save_logs=True)
