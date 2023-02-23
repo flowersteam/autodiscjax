@@ -15,7 +15,7 @@ def run_rs_experiment(jax_platform_name: str, seed: int, n_random_batches: int,
                          random_intervention_generator: eqx.Module, intervention_fn: eqx.Module,
                          perturbation_generator: eqx.Module, perturbation_fn: eqx.Module,
                          system_rollout: eqx.Module, rollout_statistics_encoder: eqx.Module,
-                         out_sanity_check=True, save_modules=False, logger=None):
+                         out_sanity_check=True, save_modules=False, save_logs=True):
     # Set platform device
     jax.config.update("jax_platform_name", jax_platform_name)
 
@@ -40,11 +40,14 @@ def run_rs_experiment(jax_platform_name: str, seed: int, n_random_batches: int,
                                                              rollout_statistics_encoder.out_dtype,
                                                              is_leaf=lambda node: isinstance(node, tuple))
 
+    # Initialize logs
+    logs = adx.DictTree()
+
     # Vmap modules
-    batched_random_intervention_generator = vmap(random_intervention_generator, in_axes=(0,), out_axes=(0, None))
-    batched_perturbation_generator = vmap(perturbation_generator, in_axes=(0,), out_axes=(0, None))
-    batched_system_rollout = vmap(system_rollout, in_axes=(0, None, 0, None, 0), out_axes=(0, None))
-    batched_rollout_statistics_encoder = vmap(rollout_statistics_encoder, in_axes=(0, 0), out_axes=(0, None))
+    batched_random_intervention_generator = vmap(random_intervention_generator)
+    batched_perturbation_generator = vmap(perturbation_generator)
+    batched_system_rollout = vmap(system_rollout, in_axes=(0, None, 0, None, 0))
+    batched_rollout_statistics_encoder = vmap(rollout_statistics_encoder)
 
     # Run Exploration
 
@@ -55,8 +58,8 @@ def run_rs_experiment(jax_platform_name: str, seed: int, n_random_batches: int,
         # generate random intervention
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
         interventions_params, log_data = batched_random_intervention_generator(jnp.array(subkeys))
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(random_intervention_generator.out_sanity_check)(interventions_params)
 
@@ -64,8 +67,8 @@ def run_rs_experiment(jax_platform_name: str, seed: int, n_random_batches: int,
         print("Generate the perturbation")
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
         perturbations_params, log_data = batched_perturbation_generator(jnp.array(subkeys))
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(perturbation_generator.out_sanity_check)(perturbations_params)
 
@@ -74,8 +77,8 @@ def run_rs_experiment(jax_platform_name: str, seed: int, n_random_batches: int,
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
         system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), intervention_fn, interventions_params,
                                                 perturbation_fn, perturbations_params)
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(system_rollout.out_sanity_check)(system_outputs)
 
@@ -84,8 +87,8 @@ def run_rs_experiment(jax_platform_name: str, seed: int, n_random_batches: int,
         print("Encode the rollout statistics")
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
         system_rollouts_statistics, log_data = batched_rollout_statistics_encoder(jnp.array(subkeys), system_outputs)
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(rollout_statistics_encoder.out_sanity_check)(system_rollouts_statistics)
 
@@ -96,7 +99,7 @@ def run_rs_experiment(jax_platform_name: str, seed: int, n_random_batches: int,
         history = history.update_node("system_rollout_statistics_library", system_rollouts_statistics, merge_concatenate)
 
     # Save history and modules
-    history.save(os.path.join(save_folder, "experiment_history.pickle"), overwrite=True)
+    history.save(os.path.join(save_folder, "history.pickle"), overwrite=True)
     if save_modules:
         eqx.tree_serialise_leaves(os.path.join(save_folder, "random_intervention_generator.eqx"), random_intervention_generator)
         eqx.tree_serialise_leaves(os.path.join(save_folder, "intervention_fn.eqx"), intervention_fn)
@@ -106,8 +109,8 @@ def run_rs_experiment(jax_platform_name: str, seed: int, n_random_batches: int,
         eqx.tree_serialise_leaves(os.path.join(save_folder, "rollout_statistics_encoder.eqx"), rollout_statistics_encoder)
 
     tend = time.time()
-    if logger is not None:
-        print("Save logger")
-        logger.add_value("experiment_time", tend - tstart)
-        logger.save()
+    if save_logs:
+        logs = append_to_log(logs, adx.DictTree({"experiment_time": tend - tstart}))
+        print("Save Logs")
+        logs.save(os.path.join(save_folder, "logs.pickle"), overwrite=True)
     print(f"Total time : {tend - tstart}")

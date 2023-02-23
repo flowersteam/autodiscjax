@@ -301,7 +301,7 @@ class GRNRollout(BaseSystemRollout):
         if perturbation_fn is None:
             perturbation_fn = NullIntervention()
 
-        #rollout_start = time.time()
+        rollout_start = time.time()
 
         def f(carry, x):
             (key, y_, w_, c_, t_) = carry
@@ -324,8 +324,8 @@ class GRNRollout(BaseSystemRollout):
         ws = jnp.moveaxis(ws, 0, -1)
         cs = jnp.moveaxis(cs, 0, -1)
 
-        #rollout_end = time.time()
-        #log_data = adx.DictTree(system_rollout_time=rollout_end-rollout_start)
+        rollout_end = time.time()
+        log_data = adx.DictTree(system_rollout_time=rollout_end-rollout_start)
 
         outputs = adx.DictTree()
         outputs.ys = ys
@@ -333,7 +333,7 @@ class GRNRollout(BaseSystemRollout):
         outputs.cs = cs
         outputs.ts = ts
 
-        return outputs, None
+        return outputs, log_data
 
 class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
     filter_fn: Callable

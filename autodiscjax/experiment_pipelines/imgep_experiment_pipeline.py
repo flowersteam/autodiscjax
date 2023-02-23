@@ -11,7 +11,8 @@ import os
 import time
 
 
-def extract_workers_data_from_optimizer_log(log_data, target_goals_embeddings, source_interventions_ids, history, append_to_history=True, logger=None, append_modules_log_data=True):
+def extract_workers_data_from_optimizer_log(log_data, target_goals_embeddings, source_interventions_ids, history, logs,
+                                            append_to_history=True, save_logs=True, append_modules_log_data=True):
     n_optim_steps = len(log_data)
 
     for optim_step_idx in range(n_optim_steps):
@@ -45,16 +46,16 @@ def extract_workers_data_from_optimizer_log(log_data, target_goals_embeddings, s
             history = history.update_node("system_rollout_statistics_library", system_rollouts_statistics, merge_concatenate)
 
         # Save logs
-        if logger is not None and append_modules_log_data:
-            append_to_log(step_log_data.perturbation_generator.log_data)
-            append_to_log(step_log_data.system_rollout.log_data)
-            append_to_log(step_log_data.goal_embedding_encoder.log_data)
-            append_to_log(step_log_data.goal_achievement_loss.log_data)
-            append_to_log(step_log_data.rollout_statistics_encoder.log_data)
+        if save_logs and append_modules_log_data:
+            logs = append_to_log(logs, step_log_data.perturbation_generator.log_data)
+            logs = append_to_log(logs, step_log_data.system_rollout.log_data)
+            logs = append_to_log(logs, step_log_data.goal_embedding_encoder.log_data)
+            logs = append_to_log(logs, step_log_data.goal_achievement_loss.log_data)
+            logs = append_to_log(logs, step_log_data.rollout_statistics_encoder.log_data)
 
     del log_data
 
-    return history
+    return history, logs
 
 def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: int, n_imgep_batches: int,
                          batch_size: int, save_folder: str,
@@ -65,7 +66,7 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
                          gc_intervention_optimizer: eqx.Module,
                          goal_embedding_encoder: eqx.Module,
                          goal_achievement_loss: eqx.Module,
-                         out_sanity_check=True, save_modules=False, logger=None):
+                         out_sanity_check=True, save_modules=False, save_logs=True):
     # Set platform device
     jax.config.update("jax_platform_name", jax_platform_name)
 
@@ -115,6 +116,9 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
                                                              rollout_statistics_encoder.out_shape,
                                                              rollout_statistics_encoder.out_dtype,
                                                              is_leaf=lambda node: isinstance(node, tuple))
+    
+    # Initialize logs
+    logs = adx.DictTree()
 
     # Prepare optimizer
     partial_gc_intervention_optimizer = jtu.Partial(gc_intervention_optimizer,
@@ -125,15 +129,15 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
                                             )
 
     # Vmap modules
-    batched_random_intervention_generator = vmap(random_intervention_generator, in_axes=(0,), out_axes=(0, None))
-    batched_perturbation_generator = vmap(perturbation_generator, in_axes=(0,), out_axes=(0, None))
-    batched_system_rollout = vmap(system_rollout, in_axes=(0, None, 0, None, 0), out_axes=(0, None))
-    batched_rollout_statistics_encoder = vmap(rollout_statistics_encoder, in_axes=(0, 0), out_axes=(0, None))
-    batched_goal_generator = vmap(goal_generator, in_axes=(0, None, None, None), out_axes=(0, None))
-    batched_gc_intervention_selector = vmap(gc_intervention_selector, in_axes=(0, 0, None, None), out_axes=(0, None))
-    batched_gc_intervention_optimizer = vmap(partial_gc_intervention_optimizer, in_axes=(0, 0, 0, None), out_axes=(0, 0))
-    batched_goal_embedding_encoder = vmap(goal_embedding_encoder, in_axes=(0, 0), out_axes=(0, None))
-    batched_goal_achievement_loss = vmap(goal_achievement_loss, in_axes=(0, 0, 0), out_axes=(0, None))
+    batched_random_intervention_generator = vmap(random_intervention_generator)
+    batched_perturbation_generator = vmap(perturbation_generator)
+    batched_system_rollout = vmap(system_rollout, in_axes=(0, None, 0, None, 0))
+    batched_rollout_statistics_encoder = vmap(rollout_statistics_encoder)
+    batched_goal_generator = vmap(goal_generator, in_axes=(0, None, None, None))
+    batched_gc_intervention_selector = vmap(gc_intervention_selector, in_axes=(0, 0, None, None))
+    batched_gc_intervention_optimizer = vmap(partial_gc_intervention_optimizer, in_axes=(0, 0, 0, None))
+    batched_goal_embedding_encoder = vmap(goal_embedding_encoder)
+    batched_goal_achievement_loss = vmap(goal_achievement_loss)
 
     # Random rollouts
     tstart = time.time()
@@ -142,8 +146,8 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         # generate random intervention
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
         interventions_params, log_data = batched_random_intervention_generator(jnp.array(subkeys))
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(random_intervention_generator.out_sanity_check)(interventions_params)
 
@@ -160,8 +164,8 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         print("Generate the perturbation")
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
         perturbations_params, log_data = batched_perturbation_generator(jnp.array(subkeys))
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(perturbation_generator.out_sanity_check)(perturbations_params)
 
@@ -170,8 +174,8 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
         system_outputs, log_data = batched_system_rollout(jnp.array(subkeys), intervention_fn, interventions_params,
                                                           perturbation_fn, perturbations_params)
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(system_rollout.out_sanity_check)(system_outputs)
 
@@ -179,8 +183,8 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         print("Encode the reached goal")
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
         reached_goals_embeddings, log_data = batched_goal_embedding_encoder(jnp.array(subkeys), system_outputs)
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(goal_embedding_encoder.out_sanity_check)(reached_goals_embeddings)
 
@@ -189,8 +193,8 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
         gc_losses, log_data = batched_goal_achievement_loss(jnp.array(subkeys), reached_goals_embeddings,
                                                             target_goals_embeddings)
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(goal_achievement_loss.out_sanity_check)(gc_losses)
 
@@ -199,8 +203,8 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         key, *subkeys = jrandom.split(key, num=batch_size + 1)
         system_rollouts_statistics, log_data = batched_rollout_statistics_encoder(jnp.array(subkeys),
                                                                                   system_outputs)
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(rollout_statistics_encoder.out_sanity_check)(system_rollouts_statistics)
 
@@ -226,8 +230,8 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         target_goals_embeddings, log_data = batched_goal_generator(jnp.array(subkeys), history.target_goal_embedding_library,
                                                          history.reached_goal_embedding_library,
                                                          history.system_rollout_statistics_library)
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(goal_generator.out_sanity_check)(target_goals_embeddings)
 
@@ -237,8 +241,8 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         source_interventions_ids, log_data = batched_gc_intervention_selector(jnp.array(subkeys), target_goals_embeddings,
                                                                     history.reached_goal_embedding_library,
                                                                     history.system_rollout_statistics_library)
-        if logger is not None:
-            append_to_log(log_data)
+        if save_logs:
+            logs = append_to_log(logs, log_data)
         if out_sanity_check:
             vmap(gc_intervention_selector.out_sanity_check)(source_interventions_ids)
         interventions_params = jtu.tree_map(lambda x: x[source_interventions_ids],
@@ -252,11 +256,12 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
             vmap(gc_intervention_optimizer.out_sanity_check)(interventions_params)
 
         print("Extract workers data from optimizer logs")
-        history = extract_workers_data_from_optimizer_log(log_data, target_goals_embeddings, source_interventions_ids, history, append_to_history=True, logger=logger, append_modules_log_data=True)
+        history, logs = extract_workers_data_from_optimizer_log(log_data, target_goals_embeddings, source_interventions_ids, history, logs,
+                                                                append_to_history=True, save_logs=save_logs, append_modules_log_data=True)
 
     # Save history and modules
     print("Save history")
-    history.save(os.path.join(save_folder, "experiment_history.pickle"), overwrite=True)
+    history.save(os.path.join(save_folder, "history.pickle"), overwrite=True)
     if save_modules:
         print("Save modules")
         eqx.tree_serialise_leaves(os.path.join(save_folder, "random_intervention_generator.eqx"), random_intervention_generator)
@@ -272,9 +277,9 @@ def run_imgep_experiment(jax_platform_name: str, seed: int, n_random_batches: in
         eqx.tree_serialise_leaves(os.path.join(save_folder, "goal_achievement_loss.eqx"), goal_achievement_loss)
 
     tend = time.time()
-    if logger is not None:
-        print("Save logger")
-        logger.add_value("experiment_time", tend - tstart)
-        logger.save()
+    if save_logs:
+        logs = append_to_log(logs, adx.DictTree({"experiment_time": tend - tstart}))
+        print("Save Logs")
+        logs.save(os.path.join(save_folder, "logs.pickle"), overwrite=True)
     print(f"Total time : {tend - tstart}")
 
