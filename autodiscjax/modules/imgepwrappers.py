@@ -188,7 +188,7 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
 
         key, subkey = jrandom.split(key)
         IM_vals, IM_grads = self.IM_fn(subkey, target_goal_embedding_library, reached_goal_embedding_library, len(self.time_window))
-        log_data = adx.DictTree(IM_vals=IM_vals)
+        log_data = adx.DictTree(IM_vals=IM_vals, IM_grads=IM_grads)
 
         key, subkey = jrandom.split(key)
         is_random = jrandom.uniform(subkey, shape=()) < self.random_proba
