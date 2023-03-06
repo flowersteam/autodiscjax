@@ -1,5 +1,5 @@
 from functools import partial
-from jax import jit, lax
+from jax import jit, lax, vmap
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
@@ -33,24 +33,24 @@ def normal(key, mean: PyTree, std: PyTree, out_treedef: jtu.PyTreeDef, out_shape
         lambda key, mean, std, shape, dtype: mean + std * jrandom.normal(key, shape=shape, dtype=dtype),
         key, mean, std, out_shape, out_dtype)
 
-@partial(jit, static_argnums=(2, ))
-def nearest_neighbors(Y, X, k):
+@partial(jit, static_argnums=(3, ))
+def nearest_neighbors(target, X, loss_f=jtu.Partial(lambda y, x: jnp.sqrt(jnp.square(y - x).sum(-1))), k=1):
     """
     Arguments:
-    Y: Array [Ny, D]
-    X: Array[Nx, D
+    target: vector [D]
+    X: Array[Nx, D]
     k: int
 
     Returns:
     X_nearest_ids: Array[Ny, k] - matrix of the  k closest point ids in X (for each target point in Y),
     distances: Array[Ny, k] - corresponding distances
     """
-    *_, Dy = Y.shape
+    *_, Dy = target.shape
     *_, Dx = X.shape
     assert Dy == Dx, "Points in X and Y must lie in the same D-dimensional space"
 
-    distance_matrix = jnp.sum((Y[..., jnp.newaxis, :] - X[jnp.newaxis, ...])**2, axis=-1).squeeze()
-    nearest_distances_reverse, X_nearest_ids = lax.top_k(jnp.reciprocal(distance_matrix), k)
+    distances = vmap(loss_f, in_axes=(0,None))(X, target)
+    nearest_distances_reverse, X_nearest_ids = lax.top_k(jnp.reciprocal(distances), k)
     return X_nearest_ids, jnp.reciprocal(nearest_distances_reverse)
 
 @jit

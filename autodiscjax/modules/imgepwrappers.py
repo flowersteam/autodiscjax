@@ -211,10 +211,12 @@ class RandomInterventionSelector(BaseGCInterventionSelector):
 
 class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
     k: int = eqx.static_field()
+    loss_f: Callable
 
-    def __init__(self, out_treedef, out_shape, out_dtype, k):
+    def __init__(self, out_treedef, out_shape, out_dtype, loss_f, k):
         super().__init__(out_treedef, out_shape, out_dtype)
         self.k = k
+        self.loss_f = loss_f
 
     @jit
     def __call__(self, key, target_goals_embeddings, reached_goal_embedding_library, system_rollout_statistics_library=None):
@@ -228,8 +230,8 @@ class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
         reached_goals_high = jnp.nanmax(reached_goals_flat, 0)
         target_goals_flat = target_goals_flat / (reached_goals_high-reached_goals_low)
         reached_goals_flat = reached_goals_flat / (reached_goals_high-reached_goals_low)
-        
-        selected_intervention_ids, distances = nearest_neighbors(target_goals_flat, reached_goals_flat, k=self.k)
+
+        selected_intervention_ids, distances = nearest_neighbors(target_goals_flat, reached_goals_flat, self.loss_f, self.k)
         selected_intervention_idx = jrandom.choice(key, selected_intervention_ids, axis=-1)
 
         return selected_intervention_idx, None
@@ -239,10 +241,24 @@ class BaseGoalAchievementLoss(adx.Module):
     def __call__(self, key, reached_goal, target_goal):
         raise NotImplementedError
 
-class L2GoalAchievementLoss(BaseGoalAchievementLoss):
+class CustomGoalAchievementLoss(BaseGoalAchievementLoss):
+    loss_f: Callable
+
+    def __init__(self, out_treedef, out_shape, out_dtype, loss_f):
+        super().__init__(out_treedef, out_shape, out_dtype)
+        self.loss_f = loss_f
+
     @jit
     def __call__(self, key, reached_goal, target_goal):
-        return jnp.sqrt(jnp.square(reached_goal - target_goal).sum()), None
+        return self.loss_f(reached_goal, target_goal), None
+
+
+class L2GoalAchievementLoss(CustomGoalAchievementLoss):
+
+    def __init__(self, out_treedef, out_shape, out_dtype):
+        loss_f = jtu.Partial(lambda reached_goal, target_goal: jnp.sqrt(jnp.square(reached_goal - target_goal).sum()))
+        super().__init__(out_treedef, out_shape, out_dtype, loss_f)
+        self.loss_f = loss_f
 
 
 class BaseGCInterventionOptimizer(adx.Module):
