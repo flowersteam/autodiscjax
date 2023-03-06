@@ -198,9 +198,9 @@ class PiecewiseSetConstantIntervention(PiecewiseIntervention):
         for y_idx, new_val in intervention_params.y.items():
             y = y.at[..., y_idx].set(hardplus(new_val[..., interval_idx]))
         for w_idx, new_val in intervention_params.w.items():
-            w = w.at[..., w_idx].set(hardplus(new_val[..., interval_idx]))
+            w = w.at[..., w_idx].set(new_val[..., interval_idx])
         for c_idx, new_val in intervention_params.c.items():
-            c = c.at[..., c_idx].set(hardplus(new_val[..., interval_idx]))
+            c = c.at[..., c_idx].set(new_val[..., interval_idx])
 
         return y, w, c
 
