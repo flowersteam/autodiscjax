@@ -153,7 +153,8 @@ def create_goal_generator_module(goal_generator_config):
     elif goal_generator_config.generator_type == "IMFlow":
         goal_generator = imgep.IMFlowGoalGenerator(goal_generator_config.out_treedef, goal_generator_config.out_shape, goal_generator_config.out_dtype,
                                                    goal_generator_config.low, goal_generator_config.high,
-                                                   imgep.LearningProgressIM(), goal_generator_config.IM_val_scaling, goal_generator_config.IM_grad_scaling,
+                                                   goal_generator_config.distance_fn, imgep.LearningProgressIM(),
+                                                   goal_generator_config.IM_val_scaling, goal_generator_config.IM_grad_scaling,
                                                    goal_generator_config.random_proba, goal_generator_config.flow_noise,
                                                    goal_generator_config.time_window)
     else:

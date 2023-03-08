@@ -99,12 +99,12 @@ class HypercubeGoalGenerator(BaseGoalGenerator):
 
 class BaseIM(eqx.Module):
     @jit
-    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, time_window):
+    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, distance_fn, batch_size):
         raise NotImplementedError
 
 class LearningProgressIM(BaseIM):
     @partial(jit, static_argnames=("batch_size", ))
-    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, batch_size):
+    def __call__(self, key, target_goal_embedding_library, reached_goal_embedding_library, distance_fn, batch_size):
         target_goals = jtu.tree_map(lambda node: node[-batch_size:], target_goal_embedding_library)
         reached_goals = jtu.tree_map(lambda node: node[-batch_size:], reached_goal_embedding_library)
         previously_reached_goals = jtu.tree_map(lambda node: node[:-batch_size], reached_goal_embedding_library)
@@ -117,18 +117,16 @@ class LearningProgressIM(BaseIM):
         previously_reached_goals_flat = jnp.concatenate(previously_reached_goals_flat, axis=-1)
 
         if len(previously_reached_goals_flat) > 0:
-            previously_closest_intervention_ids, distances = nearest_neighbors(target_goals_flat, previously_reached_goals_flat,
-                                                                    k=min(len(previously_reached_goals_flat), 1))
+            previously_closest_intervention_ids, distances = vmap(nearest_neighbors, in_axes=(0, None, None, None))(target_goals_flat, previously_reached_goals_flat, distance_fn, 1)
             previously_closest_goals_flat = previously_reached_goals_flat[previously_closest_intervention_ids.squeeze()]
 
-            new_closest_intervention_ids, distances = nearest_neighbors(target_goals_flat, reached_goals_flat,
-                                                                        k=min(len(reached_goals_flat), 1))
+            new_closest_intervention_ids, distances = vmap(nearest_neighbors, in_axes=(0, None, None, None))(target_goals_flat, reached_goals_flat, distance_fn, 1)
             new_closest_goals_flat = reached_goals_flat[new_closest_intervention_ids.squeeze()]
 
-            def LP(goal_points, starting_points, reached_points):
-                return jnp.sqrt(jnp.square(goal_points - starting_points).sum(-1)) - jnp.sqrt(jnp.square(goal_points - reached_points).sum(-1))
+            def LP(target_embedding, init_embedding, reached_embedding):
+                return distance_fn(target_embedding, init_embedding) - distance_fn(target_embedding, reached_embedding)
 
-            IM_vals, IM_grads = vmap(value_and_grad(LP, 0), in_axes=(0, 0, 0))(target_goals_flat, previously_closest_goals_flat, new_closest_goals_flat)
+            IM_vals, IM_grads = vmap(value_and_grad(LP, 0))(target_goals_flat, previously_closest_goals_flat, new_closest_goals_flat)
 
         else:
             IM_vals = jnp.zeros(shape=(batch_size, ), dtype=jnp.float32)
@@ -140,6 +138,7 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
     """
     IM_fn: function that returns tensors IM_val, IM_grad. Example: LearningProgressIM()
     """
+    distance_fn: callable
     IM_fn: BaseIM
     IM_val_scaling: float = 10
     IM_grad_scaling: float = 0.4
@@ -148,9 +147,11 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
     time_window: Array = jnp.r_[-100:0]
 
     def __init__(self, out_treedef, out_shape, out_dtype, low=None, high=None,
+                 distance_fn=jtu.Partial(lambda y, x: jnp.sqrt(jnp.square(y - x).sum(-1))),
                  IM_fn=LearningProgressIM(), IM_val_scaling=10, IM_grad_scaling=0.4,
                  random_proba=0.2, flow_noise=0.1, time_window=jnp.r_[-100:0]):
         super().__init__(out_treedef, out_shape, out_dtype, low, high)
+        self.distance_fn = distance_fn
         self.IM_fn = IM_fn
         self.IM_val_scaling = IM_val_scaling
         self.IM_grad_scaling = IM_grad_scaling
@@ -187,7 +188,8 @@ class IMFlowGoalGenerator(BaseGoalGenerator):
             return flowed_goal
 
         key, subkey = jrandom.split(key)
-        IM_vals, IM_grads = self.IM_fn(subkey, target_goal_embedding_library, reached_goal_embedding_library, len(self.time_window))
+        IM_vals, IM_grads = self.IM_fn(subkey, target_goal_embedding_library, reached_goal_embedding_library,
+                                       self.distance_fn, len(self.time_window))
         log_data = adx.DictTree(IM_vals=IM_vals, IM_grads=IM_grads)
 
         key, subkey = jrandom.split(key)
