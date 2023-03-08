@@ -213,7 +213,8 @@ class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
     k: int = eqx.static_field()
     loss_f: Callable
 
-    def __init__(self, out_treedef, out_shape, out_dtype, loss_f, k):
+    def __init__(self, out_treedef, out_shape, out_dtype,
+                 loss_f=jtu.Partial(lambda y, x: jnp.sqrt(jnp.square(y - x).sum(-1))), k=1):
         super().__init__(out_treedef, out_shape, out_dtype)
         self.k = k
         self.loss_f = loss_f
@@ -232,7 +233,7 @@ class NearestNeighborInterventionSelector(BaseGCInterventionSelector):
         reached_goals_flat = reached_goals_flat / (reached_goals_high-reached_goals_low)
 
         selected_intervention_ids, distances = nearest_neighbors(target_goals_flat, reached_goals_flat, self.loss_f, self.k)
-        selected_intervention_idx = jrandom.choice(key, selected_intervention_ids, axis=-1)
+        selected_intervention_idx = jrandom.choice(key, selected_intervention_ids)
 
         return selected_intervention_idx, None
 
