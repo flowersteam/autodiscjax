@@ -42,14 +42,10 @@ def nearest_neighbors(target, X, loss_f=jtu.Partial(lambda y, x: jnp.sqrt(jnp.sq
     k: int
 
     Returns:
-    X_nearest_ids: Array[Ny, k] - matrix of the  k closest point ids in X (for each target point in Y),
-    distances: Array[Ny, k] - corresponding distances
+    X_nearest_ids: Array[k] - matrix of the  k closest point ids in X (for each target point in Y),
+    distances: Array[k] - corresponding distances
     """
-    *_, Dy = target.shape
-    *_, Dx = X.shape
-    assert Dy == Dx, "Points in X and Y must lie in the same D-dimensional space"
-
-    distances = vmap(loss_f, in_axes=(0,None))(X, target)
+    distances = vmap(loss_f, in_axes=(None, 0))(target, X)
     nearest_distances_reverse, X_nearest_ids = lax.top_k(jnp.reciprocal(distances), k)
     return X_nearest_ids, jnp.reciprocal(nearest_distances_reverse)
 
