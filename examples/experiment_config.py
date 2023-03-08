@@ -110,6 +110,7 @@ class ExperimentConfig:
 
         config.generator_type = "IMFlow"
         optimizer_config = self.get_gc_intervention_optimizer_config()
+        config.distance_fn = jtu.Partial(lambda y, x: jnp.sqrt(jnp.square(y - x).sum(-1)))
         config.IM_val_scaling = 20.0
         config.IM_grad_scaling = 0.1
         config.random_proba = 0.2
@@ -126,8 +127,8 @@ class ExperimentConfig:
     def get_gc_intervention_selector_config(self):
         config = Dict()
         config.selector_type = "nearest_neighbor"
+        config.loss_f = jtu.Partial(lambda y, x: jnp.sqrt(jnp.square(y - x).sum(-1)))
         config.k = 1
-        config.batch_size = self.batch_size
         return config
 
     def get_gc_intervention_optimizer_config(self):
