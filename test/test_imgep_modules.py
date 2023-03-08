@@ -57,6 +57,7 @@ def test_im_flow_goal_generator():
     goal_embedding_shape = jtu.tree_map(lambda _: (gs_ndim,), goal_embedding_tree)
     goal_embedding_dtype = jtu.tree_map(lambda _: jnp.float32, goal_embedding_tree)
 
+    distance_fn = jtu.Partial(lambda y, x: jnp.sqrt(jnp.square(y - x).sum(-1)))
     IM_fn = LearningProgressIM()
     IM_val_scaling = 10.
     IM_grad_scaling = 0.
@@ -65,7 +66,7 @@ def test_im_flow_goal_generator():
     time_window = jnp.r_[-batch_size:0]
 
     imflow_generator = IMFlowGoalGenerator(goal_embedding_treedef, goal_embedding_shape, goal_embedding_dtype, None, None,
-                                           IM_fn, IM_val_scaling, IM_grad_scaling, random_proba, flow_noise, time_window)
+                                           distance_fn, IM_fn, IM_val_scaling, IM_grad_scaling, random_proba, flow_noise, time_window)
     imflow_generator = vmap(imflow_generator, in_axes=(0, None, None, None), out_axes=0)
 
     key = jrandom.PRNGKey(0)
@@ -108,10 +109,12 @@ def test_nn_intervention_selector():
     intervention_selector_treedef = jtu.tree_structure(intervention_selector_tree)
     intervention_selector_shape = jtu.tree_map(lambda _: (), intervention_selector_tree)
     intervention_selector_dtype = jtu.tree_map(lambda _: jnp.int32, intervention_selector_tree)
+    loss_f = jtu.Partial(lambda y, x: jnp.sqrt(jnp.square(y - x).sum(-1)))
     k = 1
     gc_intervention_selector = NearestNeighborInterventionSelector(intervention_selector_treedef,
-                                                                         intervention_selector_shape,
-                                                                         intervention_selector_dtype, k)
+                                                                   intervention_selector_shape,
+                                                                   intervention_selector_dtype,
+                                                                   loss_f=loss_f, k=k)
     gc_intervention_selector = vmap(gc_intervention_selector, in_axes=(0, 0, None, None), out_axes=(0, None))
 
     key, *subkeys = jrandom.split(key, num=batch_size + 1)
