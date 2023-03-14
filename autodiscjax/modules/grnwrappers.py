@@ -112,7 +112,7 @@ class WallPerturbationGenerator(adx.Module):
         out_shape = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))[0][0] #..., n_walls, 2, len(time_intervals)
 
         node_ids = jnp.array(list(out_params.y.keys()))
-        ys = system_outputs_library.ys[..., node_ids, :]
+        ys = system_outputs_library.ys[..., node_ids, 1:] #we start from 1 to not account for first big init jump in distance travelled
 
         # sample random wall orientation (50% vertical, 50% horizontal)
 
