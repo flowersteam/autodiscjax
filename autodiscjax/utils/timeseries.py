@@ -4,13 +4,13 @@ import jax.numpy as jnp
 
 
 @jit
-def is_stable(x, time_window=jnp.r_[-1000:0], std_epsilon=1e-4):
+def is_stable(x, time_window=jnp.r_[-1000:0], settling_threshold=0.02):
     """
     x is a signal of shape ...xT
     """
     mean_vals = jnp.nanmean(x[..., time_window], -1)
     std_vals = jnp.nanstd(x[..., time_window], -1)
-    is_stable = (std_vals < std_epsilon)
+    is_stable = ((x[..., time_window] - x[..., -1][..., jnp.newaxis]) < settling_threshold[..., jnp.newaxis]).all(-1)
 
     return is_stable, mean_vals, std_vals
 

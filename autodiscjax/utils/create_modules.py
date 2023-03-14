@@ -35,7 +35,7 @@ def create_rollout_statistics_encoder_module(rollout_statistics_encoder_config):
     elif rollout_statistics_encoder_config.statistics_type == "grn":
         rollout_statistics_encoder = grn.GRNRolloutStatisticsEncoder(y_shape=rollout_statistics_encoder_config.y_shape,
                                                                      is_stable_time_window=rollout_statistics_encoder_config.is_stable_time_window,
-                                                                     is_stable_std_epsilon=rollout_statistics_encoder_config.is_stable_std_epsilon,
+                                                                     is_stable_settling_threshold=rollout_statistics_encoder_config.is_stable_settling_threshold,
                                                                      is_converging_time_window=rollout_statistics_encoder_config.is_converging_time_window,
                                                                      is_converging_ratio_threshold=rollout_statistics_encoder_config.is_converging_ratio_threshold,
                                                                      is_monotonous_time_window=rollout_statistics_encoder_config.is_monotonous_time_window,
