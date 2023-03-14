@@ -43,7 +43,7 @@ class ExperimentConfig:
         config.statistics_type = "grn"
         config.y_shape = (self.n_nodes, system_rollout_config.n_system_steps)
         config.is_stable_time_window = jnp.r_[-system_rollout_config.n_system_steps // 100:0]
-        config.is_stable_std_epsilon = jnp.maximum(1e-6, 1e-2 * (self.ymax-self.ymin))
+        config.is_stable_settling_threshold = jnp.maximum(1e-6, 0.02 * (self.ymax-self.ymin))
         config.is_converging_time_window = jnp.r_[-system_rollout_config.n_system_steps // 2:0]
         config.is_converging_ratio_threshold = 0.8
         config.is_monotonous_time_window = jnp.r_[-system_rollout_config.n_system_steps // 100:0]
@@ -55,7 +55,8 @@ class ExperimentConfig:
     def get_random_intervention_generator_config(self):
         config = Dict()
         config.intervention_type = "set_uniform"
-        config.controlled_intervals = [[0, 1e-5]]
+        system_rollout_config = self.get_system_rollout_config()
+        config.controlled_intervals = [[-system_rollout_config.deltaT / 2.0, system_rollout_config.deltaT / 2.0]]
 
         config.controlled_node_ids = list(range(self.n_nodes))
         intervention_params_tree = DictTree()
@@ -94,8 +95,6 @@ class ExperimentConfig:
 
     def get_goal_generator_config(self):
         config = Dict()
-        config.low = 0.0
-        config.high = None
 
         goal_embedding_encoder_config = self.get_goal_embedding_encoder_config()
         config.out_treedef = goal_embedding_encoder_config.out_treedef
@@ -110,7 +109,8 @@ class ExperimentConfig:
 
         config.generator_type = "IMFlow"
         optimizer_config = self.get_gc_intervention_optimizer_config()
-        config.distance_fn = jtu.Partial(lambda y, x: jnp.sqrt(jnp.square(y - x).sum(-1)))
+        intervention_selector_config = self.get_gc_intervention_selector_config()
+        config.distance_fn = intervention_selector_config.loss_f
         config.IM_val_scaling = 20.0
         config.IM_grad_scaling = 0.1
         config.random_proba = 0.2

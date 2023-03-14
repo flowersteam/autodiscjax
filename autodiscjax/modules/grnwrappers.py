@@ -339,7 +339,7 @@ class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
     filter_fn: Callable
     update_fn: Callable
     
-    def __init__(self, y_shape, is_stable_time_window=jnp.r_[-1000:0], is_stable_std_epsilon=1e-3,
+    def __init__(self, y_shape, is_stable_time_window=jnp.r_[-1000:0], is_stable_settling_threshold=0.02,
                  is_converging_time_window=jnp.r_[-1000:0], is_converging_ratio_threshold=0.5, is_monotonous_time_window=jnp.r_[-1000:0],
                  is_periodic_time_window=jnp.r_[-1000:0], is_periodic_max_frequency_threshold=40, is_periodic_deltaT=0.1,
                  ):
@@ -361,16 +361,16 @@ class GRNRolloutStatisticsEncoder(BaseRolloutStatisticsEncoder):
         super().__init__(out_treedef=out_treedef, out_shape=out_shape, out_dtype=out_dtype)
 
         self.filter_fn = jtu.Partial(lambda system_outputs: system_outputs.ys)
-        self.update_fn = jtu.Partial(self.calc_statistics, is_stable_time_window=is_stable_time_window, is_stable_std_epsilon=is_stable_std_epsilon,
+        self.update_fn = jtu.Partial(self.calc_statistics, is_stable_time_window=is_stable_time_window, is_stable_settling_threshold=is_stable_settling_threshold,
                                      is_converging_time_window=is_converging_time_window, is_converging_ratio_threshold=is_converging_ratio_threshold,
                                      is_monotonous_time_window=is_monotonous_time_window, is_periodic_time_window=is_periodic_time_window,
                                      is_periodic_max_frequency_threshold=is_periodic_max_frequency_threshold, is_periodic_deltaT=is_periodic_deltaT)
 
-    def calc_statistics(self, y, is_stable_time_window, is_stable_std_epsilon, is_converging_time_window, is_converging_ratio_threshold,
+    def calc_statistics(self, y, is_stable_time_window, is_stable_settling_threshold, is_converging_time_window, is_converging_ratio_threshold,
                         is_monotonous_time_window, is_periodic_time_window, is_periodic_max_frequency_threshold, is_periodic_deltaT):
 
         is_valid = ~(jnp.isnan(y).any(-1))
-        is_stable, mean_vals, std_vals = timeseries.is_stable(y, time_window=is_stable_time_window, std_epsilon=is_stable_std_epsilon)
+        is_stable, mean_vals, std_vals = timeseries.is_stable(y, time_window=is_stable_time_window, settling_threshold=is_stable_settling_threshold)
         is_converging = timeseries.is_converging(y, time_window=is_converging_time_window, ratio_threshold=is_converging_ratio_threshold)
         is_monotonous, diff_signs = timeseries.is_monotonous(y, time_window=is_monotonous_time_window)
         is_periodic, _, amplitude_vals, max_frequency_vals = timeseries.is_periodic(y, time_window=is_periodic_time_window, deltaT=is_periodic_deltaT,
