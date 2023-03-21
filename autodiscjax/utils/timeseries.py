@@ -10,7 +10,10 @@ def is_stable(x, time_window=jnp.r_[-1000:0], settling_threshold=0.02):
     """
     mean_vals = jnp.nanmean(x[..., time_window], -1)
     std_vals = jnp.nanstd(x[..., time_window], -1)
-    is_stable = ((x[..., time_window] - x[..., -1][..., jnp.newaxis]) < settling_threshold[..., jnp.newaxis]).all(-1)
+
+    settling_threshold_vals = (settling_threshold*jnp.abs(x[..., 0] - x[..., -1])[..., jnp.newaxis])
+    settling_threshold_vals = jnp.maximum(settling_threshold_vals, 1e-6) # JAX numerical issues due to float32
+    is_stable = (jnp.abs(x[..., time_window] - x[..., -1][..., jnp.newaxis]) < settling_threshold_vals).all(-1)
 
     return is_stable, mean_vals, std_vals
 
