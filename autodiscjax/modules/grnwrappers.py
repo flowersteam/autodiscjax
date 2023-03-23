@@ -37,10 +37,10 @@ class NoisePerturbationGenerator(adx.Module):
         std = jtu.tree_map(lambda shape, dtype: self.std*jnp.ones(shape=shape, dtype=dtype), self.out_shape,
                                  self.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
         for y_idx, out_shape in self.out_shape.y.items():
-            yranges = (system_outputs_library.ys[..., y_idx, :].max(-1) - system_outputs_library.ys[..., y_idx, :].min(-1))[..., jnp.newaxis] #shape(batch_size, 1)
+            yranges = (jnp.nanmax(system_outputs_library.ys[..., y_idx, 1:], -1) - jnp.nanmin(system_outputs_library.ys[..., y_idx, 1:], -1))[..., jnp.newaxis] #shape(batch_size, 1) #we start from 1 to dont take into account big jumps
             std.y[y_idx] = std.y[y_idx] * yranges
         for w_idx, out_shape in self.out_shape.w.items():
-            wranges = (system_outputs_library.ws[..., w_idx, :].max(-1) - system_outputs_library.ws[..., w_idx, :].min(-1))[..., jnp.newaxis] #shape(batch_size, 1)
+            wranges = (jnp.nanmax(system_outputs_library.ws[..., w_idx, :], -1) - jnp.nanmin(system_outputs_library.ws[..., w_idx, :], -1))[..., jnp.newaxis] #shape(batch_size, 1)
             std.w[w_idx] = std.w[w_idx] * wranges
         for c_idx, out_shape in self.out_shape.c.items():
             std.c[c_idx] = std.c[c_idx] * system_outputs_library.cs[..., c_idx, :].max(-1)
@@ -53,11 +53,15 @@ class PushPerturbationGenerator(adx.Module):
     out_treedef: out_params.y[idx] = Array for idx in perturbed node ids
     out_shape: Array of shape (batch_size, len(time_intervals))
     """
+    n_pushes: int = 1
     magnitude: float = 0.1
 
-    def __init__(self, out_treedef, out_shape, out_dtype, magnitude):
+    def __init__(self, out_treedef, out_shape, out_dtype, n_pushes, magnitude):
         super().__init__(out_treedef, out_shape, out_dtype)
         self.magnitude = magnitude
+        out_shape = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))[0][0]  # ..., n_pushes
+        assert out_shape[-1] == n_pushes
+        self.n_pushes = n_pushes
 
     @eqx.filter_jit
     def __call__(self, key, system_outputs_library):
@@ -65,17 +69,26 @@ class PushPerturbationGenerator(adx.Module):
         magnitude = jtu.tree_map(lambda shape, dtype: self.magnitude*jnp.ones(shape=shape, dtype=dtype), self.out_shape,
                                  self.out_dtype, is_leaf=lambda node: isinstance(node, tuple))
         for y_idx, out_shape in self.out_shape.y.items():
-            yranges = (system_outputs_library.ys[..., y_idx, :].max(-1) - system_outputs_library.ys[..., y_idx, :].min(-1))[..., jnp.newaxis] #shape(batch_size, 1)
+            yranges = (jnp.nanmax(system_outputs_library.ys[..., y_idx, 1:], -1) - jnp.nanmin(system_outputs_library.ys[..., y_idx, 1:], -1))[..., jnp.newaxis] #shape(batch_size, 1) #we start from 1 to dont take into account big jumps
             magnitude.y[y_idx] = magnitude.y[y_idx] * yranges
         for w_idx, out_shape in self.out_shape.w.items():
-            wranges = (system_outputs_library.ws[..., w_idx, :].max(-1) - system_outputs_library.ws[..., w_idx, :].min(-1))[..., jnp.newaxis] #shape(batch_size, 1)
+            wranges = (jnp.nanmax(system_outputs_library.ws[..., w_idx, :], -1) - jnp.nanmin(system_outputs_library.ws[..., w_idx, :], -1))[..., jnp.newaxis] #shape(batch_size, 1)
             magnitude.w[w_idx] = magnitude.w[w_idx] * wranges
         for c_idx, out_shape in self.out_shape.c.items():
             magnitude.c[c_idx] = magnitude.c[c_idx] * system_outputs_library.cs[..., c_idx, :].max(-1)
 
-        # sample push = adding (-1, 0, or 1)*magnitude over each perturbation axis
-        key = self.out_treedef.unflatten(jrandom.split(key, self.out_treedef.num_leaves))
-        out_params = jtu.tree_map(lambda node, subkey: jrandom.choice(subkey, jnp.arange(-1,2, dtype=jnp.float32)) * node, magnitude, key)
+        # sample push on the hyper-rectangle of side magnitude
+        n_leaves = self.out_treedef.num_leaves
+        # set one magnitude factor to [-1,1] and others to [-1..1]
+        key, subkey = jrandom.split(key)
+        factors = jrandom.uniform(subkey, shape=(n_leaves, self.n_pushes), minval=-1., maxval=1.)
+        key, subkey = jrandom.split(key)
+        max_dir = jrandom.choice(subkey, jnp.arange(factors.shape[0]), shape=(self.n_pushes,))
+        key, subkey = jrandom.split(key)
+        max_dir_sign = jrandom.choice(subkey, jnp.array([-1., 1.]), shape=(self.n_pushes,))
+        for push_idx in range(self.n_pushes):
+            factors = factors.at[max_dir, push_idx].set(max_dir_sign[push_idx])
+        out_params = jtu.tree_map(lambda factor, mag: factor * mag, self.out_treedef.unflatten(factors), magnitude)
 
         return out_params, None
 

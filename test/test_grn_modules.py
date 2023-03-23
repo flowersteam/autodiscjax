@@ -38,6 +38,8 @@ def test_noise_perturbation():
     system_rollout = load_system(biomodel_id, n_steps)
 
     for variant in ["noise_y", "noise_w", "noise_c"]:
+        if "w" in variant and len(system_rollout.w0) == 0:
+            continue
         perturbed_intervals = []
         for t_idx in range(5, int(n_steps*0.1/2), 5):
             perturbed_intervals.append([t_idx-0.1/2, t_idx+0.1/2])
@@ -89,7 +91,7 @@ def test_noise_perturbation():
 
 
 def test_push_perturbation():
-    key = jrandom.PRNGKey(0)
+    key = jrandom.PRNGKey(1)
 
     # Load the system
     biomodel_id = 29
@@ -97,8 +99,11 @@ def test_push_perturbation():
     system_rollout = load_system(biomodel_id, n_steps)
 
     for variant in ["push_y", "push_w", "push_c"]:
-        perturbed_intervals = []
-        perturbed_intervals.append([int(n_steps * 0.1 / 2)-0.1/2, int(n_steps * 0.1 / 2)+0.1/2])
+        if "w" in variant and len(system_rollout.w0) == 0:
+            continue
+        t1 = n_steps*0.1/4
+        t2 = n_steps*0.1*3/4
+        perturbed_intervals = [[t1-0.1/2, t1+0.1/2], [t2-0.1/2, t2+0.1/2]]
         magnitude = 0.2
 
         perturbation_fn = grn.PiecewiseAddConstantIntervention(
@@ -113,9 +118,10 @@ def test_push_perturbation():
         perturbation_params_dtype = jtu.tree_map(lambda _: jnp.float32, perturbation_params_tree)
 
         perturbation_generator = grn.PushPerturbationGenerator(perturbation_params_treedef,
-                                                                perturbation_params_shape,
-                                                                perturbation_params_dtype,
-                                                                magnitude=magnitude)
+                                                               perturbation_params_shape,
+                                                               perturbation_params_dtype,
+                                                               n_pushes=len(perturbed_intervals),
+                                                               magnitude=magnitude)
 
         # Batch modules
         batched_perturbation_generator = vmap(perturbation_generator, in_axes=(0, 0), out_axes=0)
