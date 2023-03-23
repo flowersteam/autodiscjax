@@ -38,6 +38,8 @@ def test_noise_perturbation():
     system_rollout = load_system(biomodel_id, n_steps)
 
     for variant in ["noise_y", "noise_w", "noise_c"]:
+        if "w" in variant and len(system_rollout.w0) == 0:
+            continue
         perturbed_intervals = []
         for t_idx in range(5, int(n_steps*0.1/2), 5):
             perturbed_intervals.append([t_idx-0.1/2, t_idx+0.1/2])
@@ -89,7 +91,7 @@ def test_noise_perturbation():
 
 
 def test_push_perturbation():
-    key = jrandom.PRNGKey(0)
+    key = jrandom.PRNGKey(1)
 
     # Load the system
     biomodel_id = 29
@@ -97,6 +99,8 @@ def test_push_perturbation():
     system_rollout = load_system(biomodel_id, n_steps)
 
     for variant in ["push_y", "push_w", "push_c"]:
+        if "w" in variant and len(system_rollout.w0) == 0:
+            continue
         perturbed_intervals = []
         perturbed_intervals.append([int(n_steps * 0.1 / 2)-0.1/2, int(n_steps * 0.1 / 2)+0.1/2])
         magnitude = 0.2
