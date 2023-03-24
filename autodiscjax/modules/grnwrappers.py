@@ -53,11 +53,15 @@ class PushPerturbationGenerator(adx.Module):
     out_treedef: out_params.y[idx] = Array for idx in perturbed node ids
     out_shape: Array of shape (batch_size, len(time_intervals))
     """
+    n_pushes: int = 1
     magnitude: float = 0.1
 
-    def __init__(self, out_treedef, out_shape, out_dtype, magnitude):
+    def __init__(self, out_treedef, out_shape, out_dtype, n_pushes, magnitude):
         super().__init__(out_treedef, out_shape, out_dtype)
         self.magnitude = magnitude
+        out_shape = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))[0][0]  # ..., n_pushes
+        assert out_shape[-1] == n_pushes
+        self.n_pushes = n_pushes
 
     @eqx.filter_jit
     def __call__(self, key, system_outputs_library):
@@ -77,12 +81,13 @@ class PushPerturbationGenerator(adx.Module):
         n_leaves = self.out_treedef.num_leaves
         # set one magnitude factor to [-1,1] and others to [-1..1]
         key, subkey = jrandom.split(key)
-        factors = jrandom.uniform(subkey, shape=(n_leaves,), minval=-1., maxval=1.)
+        factors = jrandom.uniform(subkey, shape=(n_leaves, self.n_pushes), minval=-1., maxval=1.)
         key, subkey = jrandom.split(key)
-        max_dir = jrandom.choice(subkey, jnp.arange(factors.shape[0]))
+        max_dir = jrandom.choice(subkey, jnp.arange(factors.shape[0]), shape=(self.n_pushes,))
         key, subkey = jrandom.split(key)
-        max_dir_sign = jrandom.choice(subkey, jnp.array([-1., 1.]))
-        factors = factors.at[max_dir].set(max_dir_sign)
+        max_dir_sign = jrandom.choice(subkey, jnp.array([-1., 1.]), shape=(self.n_pushes,))
+        for push_idx in range(self.n_pushes):
+            factors = factors.at[max_dir, push_idx].set(max_dir_sign[push_idx])
         out_params = jtu.tree_map(lambda factor, mag: factor * mag, self.out_treedef.unflatten(factors), magnitude)
 
         return out_params, None
