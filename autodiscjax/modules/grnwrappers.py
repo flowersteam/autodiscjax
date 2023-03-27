@@ -87,7 +87,8 @@ class PushPerturbationGenerator(adx.Module):
         key, subkey = jrandom.split(key)
         max_dir_sign = jrandom.choice(subkey, jnp.array([-1., 1.]), shape=(self.n_pushes,))
         for push_idx in range(self.n_pushes):
-            factors = factors.at[max_dir, push_idx].set(max_dir_sign[push_idx])
+            factors = factors.at[max_dir[push_idx], push_idx].set(max_dir_sign[push_idx])
+
         out_params = jtu.tree_map(lambda factor, mag: factor * mag, self.out_treedef.unflatten(factors), magnitude)
 
         return out_params, None
@@ -125,10 +126,14 @@ class WallPerturbationGenerator(adx.Module):
         out_shape = jtu.tree_flatten(self.out_shape, is_leaf=lambda node: isinstance(node, tuple))[0][0] #..., n_walls, 2, len(time_intervals)
 
         node_ids = jnp.array(list(out_params.y.keys()))
-        ys = system_outputs_library.ys[..., node_ids, 1:] #we start from 1 to not account for first big init jump in distance travelled
+        trajectories = system_outputs_library.ys[..., node_ids, 1:] #we start from 1 to not account for first big init jump in distance travelled
+        trajectories_extent = jnp.nanmax(trajectories, -1) - jnp.nanmin(trajectories, -1)
+        # trick to mask within jit
+        trajectories_extent = jnp.concatenate([trajectories_extent, -1*jnp.ones_like(trajectories_extent[0])[jnp.newaxis]])
+        mask = jnp.where(trajectories_extent == 0., size=len(trajectories_extent), fill_value=-1)
+        trajectories_extent = trajectories_extent.at[mask].set(1.)[:-1]
 
         # sample random wall orientation (50% vertical, 50% horizontal)
-
         key, subkey = jrandom.split(key)
         target_node_rel_ids = jrandom.choice(subkey, jnp.arange(2), shape=(self.n_walls, ))
         other_node_rel_ids = 1-target_node_rel_ids
@@ -141,7 +146,7 @@ class WallPerturbationGenerator(adx.Module):
         walls_length = jnp.concatenate(walls_length)
 
         # sample random wall position
-        distance_travelled = jnp.cumsum(jnp.sqrt(jnp.sum((jnp.diff(ys, axis=-1)/(ys.max(-1) - ys.min(-1))[:, jnp.newaxis])** 2, axis=-2)), axis=-1) # shape (..., n_system_steps)
+        distance_travelled = jnp.cumsum(jnp.sqrt(jnp.sum((jnp.diff(trajectories, axis=-1)/trajectories_extent[..., jnp.newaxis])** 2, axis=-2)), axis=-1) # shape (..., n_system_steps)
         distance_travelled = distance_travelled / distance_travelled.max(-1) # normalize between 0 and 1
         walls_target_intersection_step = []
         for wall_idx in range(self.n_walls):
@@ -152,17 +157,15 @@ class WallPerturbationGenerator(adx.Module):
                                                                  p=jnp.ones_like(intersection_window_step_ids) * (intersection_window_step_ids>=0)))
         walls_target_intersection_step = jnp.concatenate(walls_target_intersection_step)
 
-        walls_target_centers = ys[..., target_node_rel_ids, walls_target_intersection_step]
-        walls_other_centers = ys[..., other_node_rel_ids, walls_target_intersection_step]
-        walls_length = walls_length * (ys[..., other_node_rel_ids, :].max(-1) - ys[..., other_node_rel_ids, :].min(-1))
+        walls_target_centers = trajectories[..., target_node_rel_ids, walls_target_intersection_step]
+        walls_other_centers = trajectories[..., other_node_rel_ids, walls_target_intersection_step]
+        walls_length = walls_length * trajectories_extent[..., other_node_rel_ids]
         walls_target = jnp.repeat(jnp.repeat(walls_target_centers[..., jnp.newaxis, jnp.newaxis], out_shape[-2], -2), out_shape[-1], -1) # repeat over wall dims and over time intervals
         walls_other = jnp.stack([walls_other_centers - walls_length / 2., walls_other_centers + walls_length / 2.], axis=-1).reshape(out_shape) * jnp.ones(out_shape)
         for k, v in out_params.y.items():
             out_params.y[k] = jnp.where((node_ids[target_node_rel_ids] == k)[..., jnp.newaxis, jnp.newaxis], walls_target, walls_other)
 
-        sigma = self.sigmas * jnp.stack([ys[..., target_node_rel_ids, :].max(-1) - ys[..., target_node_rel_ids, :].min(-1),
-                                         ys[..., other_node_rel_ids, :].max(-1) - ys[..., other_node_rel_ids, :].min(-1)],
-                                                         axis=-1)
+        sigma = self.sigmas * jnp.stack([trajectories_extent[..., target_node_rel_ids], trajectories_extent[..., other_node_rel_ids]], axis=-1)
         out_params.sigma = jnp.repeat(sigma[..., jnp.newaxis], out_shape[-1], -1) #repeat over time intervals
 
         return out_params, None

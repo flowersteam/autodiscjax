@@ -91,7 +91,7 @@ def test_noise_perturbation():
 
 
 def test_push_perturbation():
-    key = jrandom.PRNGKey(1)
+    key = jrandom.PRNGKey(0)
 
     # Load the system
     biomodel_id = 29
