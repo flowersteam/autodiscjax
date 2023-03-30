@@ -157,8 +157,8 @@ class WallPerturbationGenerator(adx.Module):
                                                                  p=jnp.ones_like(intersection_window_step_ids) * (intersection_window_step_ids>=0)))
         walls_target_intersection_step = jnp.concatenate(walls_target_intersection_step)
 
-        walls_target_centers = trajectories[..., target_node_rel_ids, walls_target_intersection_step]
-        walls_other_centers = trajectories[..., other_node_rel_ids, walls_target_intersection_step]
+        walls_target_centers = (trajectories[..., target_node_rel_ids, walls_target_intersection_step]+trajectories[..., target_node_rel_ids, walls_target_intersection_step+1])/2.
+        walls_other_centers = (trajectories[..., other_node_rel_ids, walls_target_intersection_step]+trajectories[..., other_node_rel_ids, walls_target_intersection_step+1])/2.
         walls_length = walls_length * trajectories_extent[..., other_node_rel_ids]
         walls_target = jnp.repeat(jnp.repeat(walls_target_centers[..., jnp.newaxis, jnp.newaxis], out_shape[-2], -2), out_shape[-1], -1) # repeat over wall dims and over time intervals
         walls_other = jnp.stack([walls_other_centers - walls_length / 2., walls_other_centers + walls_length / 2.], axis=-1).reshape(out_shape) * jnp.ones(out_shape)
