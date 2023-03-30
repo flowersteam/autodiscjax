@@ -1,8 +1,15 @@
 # remove the dist folder
+rm -rf dist/*
+
+# generate package
 python setup.py bdist_wheel sdist
 
+# test locally
+pip install dist/autodiscjax-<version>.targ.gz
+pip uninstall autodiscjax
 
-# test with pip install dist/autodiscjax-<version>.targ.gz
+# upload to pypi
+python -m twine upload dist/*
 
-
-# python -m twine upload dist/*
+# test
+pip install autodiscjax
