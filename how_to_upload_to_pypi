@@ -13,3 +13,4 @@ python -m twine upload dist/*
 
 # test
 pip install autodiscjax
+pip uninstall autodiscjax

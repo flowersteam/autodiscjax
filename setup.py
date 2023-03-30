@@ -6,7 +6,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name='autodiscjax',
-    version='0.4',
+    version='0.4.1',
     author='Mayalen Etcheverry',
     author_email='mayalen.etcheverry@inria.fr',
     description=' python library built on top of jax to facilitate automated exploration and simulation of computational models of biological processes',
