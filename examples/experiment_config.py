@@ -43,7 +43,7 @@ class ExperimentConfig:
         config.statistics_type = "grn"
         config.y_shape = (self.n_nodes, system_rollout_config.n_system_steps)
         config.is_stable_time_window = jnp.r_[-system_rollout_config.n_system_steps // 100:0]
-        config.is_stable_settling_threshold = jnp.maximum(1e-6, 0.02 * (self.ymax-self.ymin))
+        config.is_stable_settling_threshold = 0.02
         config.is_converging_time_window = jnp.r_[-system_rollout_config.n_system_steps // 2:0]
         config.is_converging_ratio_threshold = 0.8
         config.is_monotonous_time_window = jnp.r_[-system_rollout_config.n_system_steps // 100:0]
