@@ -63,7 +63,7 @@ def is_periodic(x, time_window=jnp.r_[-1000:0], deltaT=1, max_frequency_threshol
     freqs = jnp.fft.fftfreq(n=len(time_window), d=deltaT)[1:len(time_window)//2]
     is_periodic = (sp.max(-1) > max_frequency_threshold) & (sp.argmax(-1) > 0)
     max_frequency_vals = freqs[sp.argmax(-1)]
-    mean_vals = x[..., time_window].mean(-1)
+    offset_vals = (x[..., time_window].max(-1) + x[..., time_window].min(-1)) / 2.
     amplitude_vals = x[..., time_window].max(-1) - x[..., time_window].min(-1)
 
-    return is_periodic, mean_vals, amplitude_vals, max_frequency_vals
+    return is_periodic, offset_vals, amplitude_vals, max_frequency_vals
