@@ -34,4 +34,16 @@ AutoDiscJax is inspired by:
 - the [equinox](https://github.com/patrick-kidger/equinox) library module definition (by Patrick Kidger)
 
 ## See Also
-Library to: [sbmltoodejax]()
+Library to parse and convert SBML models into python models written in JAX: [SBMLtoODEjax](https://github.com/flowersteam/sbmltoodejax)
+
+
+## Citation
+```
+ @article{Etcheverry_2024, 
+ title={AI-driven Automated Discovery Tools Reveal Diverse Behavioral Competencies of Biological Networks}, 
+ url={http://dx.doi.org/10.7554/eLife.92683.3}, 
+ DOI={10.7554/elife.92683.3}, 
+ publisher={eLife Sciences Publications, Ltd}, 
+ author={Etcheverry, Mayalen and Moulin-Frier, Clément and Oudeyer, Pierre-Yves and Levin, Michael}, 
+ year={2024}}
+ ```
